@@ -1,0 +1,11 @@
+# Mac OS
+.DS_Store
+
+# Stack
+.stack-work/
+
+# Emacs
+.\#*
+
+# Vim
+*.swp
