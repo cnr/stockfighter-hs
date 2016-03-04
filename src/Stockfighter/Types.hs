@@ -78,6 +78,7 @@ data UserOrder = UserOrder { uoVenue       :: String
                            , uoQty         :: Int
                            , uoPrice       :: Int
                            , uoOrderType   :: OrderType
+                           , uoOrderId     :: Int
                            , uoAccount     :: String
                            , uoTs          :: LocalTime
                            , uoFills       :: [Fill]
@@ -164,6 +165,7 @@ instance FromJSON UserOrder where
                   <*>                obj .: "qty"
                   <*>                obj .: "price"
                   <*>                obj .: "orderType"
+                  <*>                obj .: "id"
                   <*>                obj .: "account"
                   <*> (parseTime =<< obj .: "ts")
                   <*>                obj .: "fills"

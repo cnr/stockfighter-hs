@@ -23,8 +23,9 @@ module Stockfighter.Client
   , cancelOrder
   ) where
 
-import           Control.Lens
+import           Control.Lens hiding ((.=))
 import           Control.Monad.Reader
+import           Data.Aeson
 import           Data.Aeson.Lens
 import           Stockfighter.Client.Internal
 import           Stockfighter.Types
@@ -52,13 +53,13 @@ orderStatus stock orderId = getVenue ("stocks/" ++ stock ++ "/orders/" ++ show o
 
 allOrders :: MonadIO m => StockfighterT m [UserOrder]
 allOrders = do
-    acc <- asks optAccount
-    getVenue ("accounts/" ++ acc ++ "/orders")
+    _account <- asks optAccount
+    getVenue ("accounts/" ++ _account ++ "/orders")
 
 ordersForStock :: MonadIO m => String -> StockfighterT m [UserOrder]
 ordersForStock stock = do
-    acc <- asks optAccount
-    getVenueWith ("accounts/" ++ acc ++ "/stocks/" ++ stock ++ "/orders") (^? key "orders")
+    _account <- asks optAccount
+    getVenueWith ("accounts/" ++ _account ++ "/stocks/" ++ stock ++ "/orders") (^? key "orders")
 
 
 ---- POST
@@ -70,7 +71,26 @@ placeOrder :: MonadIO m
            -> Direction
            -> OrderType
            -> StockfighterT m UserOrder
-placeOrder = undefined
+placeOrder stock _price quantity _direction _orderType = do
+    _account <- asks optAccount
+    _venue   <- asks optVenue
+    postVenue ("stocks/" ++ stock ++ "/orders")
+              (object [ "account"   .= _account
+                      , "venue"     .= _venue
+                      , "stock"     .= stock
+                      , "price"     .= _price
+                      , "qty"       .= quantity
+                      , "direction" .=
+                            case _direction of
+                                Ask -> "sell" :: String
+                                Bid -> "buy"
+                      , "orderType" .=
+                            case _orderType of
+                                Limit -> "limit" :: String
+                                Market -> "market"
+                                FillOrKill -> "fill-or-kill"
+                                ImmediateOrCancel -> "immediate-or-cancel"
+                      ])
 
 
 ---- DELETE
@@ -79,4 +99,4 @@ cancelOrder :: MonadIO m
             => String -- Stock symbol
             -> Int    -- Order ID
             -> StockfighterT m UserOrder
-cancelOrder = undefined
+cancelOrder stock orderId = deleteVenue ("stocks/" ++ stock ++ "/orders/" ++ show orderId)
