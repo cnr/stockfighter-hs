@@ -6,6 +6,7 @@
 
 # Emacs
 .\#*
+TAGS
 
 # Vim
 *.swp

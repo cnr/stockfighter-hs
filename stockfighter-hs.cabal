@@ -15,8 +15,18 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Lib
+  exposed-modules:     Stockfighter.Client
+                     , Stockfighter.Types
+  other-modules:       Stockfighter.Client.Internal
   build-depends:       base >= 4.7 && < 5
+                     , aeson
+                     , bytestring
+                     , lens
+                     , lens-aeson
+                     , mtl
+                     , time
+                     , transformers
+                     , wreq
   default-language:    Haskell2010
 
 executable stockfighter-hs-exe
