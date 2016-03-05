@@ -14,6 +14,7 @@ module Stockfighter.Types
   , UserOrder(..)
   , Fill(..)
   , Quote(..)
+  , Execution(..)
   , Stock(..)
 
   -- Lenses
@@ -25,16 +26,23 @@ module Stockfighter.Types
   , bidList
   , bidSize
   , direction
+  , filled
+  , filledAt
   , fills
+  , incomingComplete
+  , incomingId
   , lastPrice
   , lastSize
   , lastTrade
   , open
+  , order
   , orderType
   , originalQty
   , price
   , qty
   , quoteTime
+  , standingComplete
+  , standingId
   , symbol
   , totalFilled
   , ts
@@ -43,7 +51,7 @@ module Stockfighter.Types
 
 import Control.Applicative ((<|>), empty)
 import Control.Lens        (abbreviatedFields, makeLensesWith)
-import Data.Aeson          ((.:), FromJSON(parseJSON), withObject, withText)
+import Data.Aeson          ((.:), (.:?), FromJSON(parseJSON), withObject, withText)
 import Data.Aeson.Types    (Parser)
 import Data.Bool           (bool)
 import Data.Time.LocalTime (LocalTime)
@@ -94,8 +102,8 @@ data Fill  = Fill  { fPrice     :: Int
 
 data Quote = Quote { qSymbol    :: String
                    , qVenue     :: String
-                   , qBid       :: Int
-                   , qAsk       :: Int
+                   , qBid       :: Maybe Int
+                   , qAsk       :: Maybe Int
                    , qBidSize   :: Int
                    , qAskSize   :: Int
                    , qBidDepth  :: Int
@@ -105,6 +113,19 @@ data Quote = Quote { qSymbol    :: String
                    , qLastTrade :: LocalTime
                    , qQuoteTime :: LocalTime
                    } deriving Show
+
+data Execution = Execution { eAccount          :: String
+                           , eVenue            :: String
+                           , eSymbol           :: String
+                           , eOrder            :: Order
+                           , eStandingId       :: Int
+                           , eIncomingId       :: Int
+                           , ePrice            :: Int
+                           , eFilled           :: Int
+                           , eFilledAt         :: LocalTime
+                           , eStandingComplete :: Bool
+                           , eIncomingComplete :: Bool
+                           } deriving Show
 
 ---- Misc
 
@@ -122,6 +143,7 @@ $(makeLensesWith abbreviatedFields ''Order)
 $(makeLensesWith abbreviatedFields ''OrderBook)
 $(makeLensesWith abbreviatedFields ''OrderType)
 $(makeLensesWith abbreviatedFields ''Quote)
+$(makeLensesWith abbreviatedFields ''Execution)
 $(makeLensesWith abbreviatedFields ''Stock)
 $(makeLensesWith abbreviatedFields ''UserOrder)
 
@@ -180,18 +202,32 @@ instance FromJSON Fill where
 
 instance FromJSON Quote where
     parseJSON = withObject "Quote" $ \obj ->
-        Quote <$>                obj .: "symbol"
-              <*>                obj .: "venue"
-              <*>                obj .: "bid"
-              <*>                obj .: "ask"
-              <*>                obj .: "bidSize"
-              <*>                obj .: "askSize"
-              <*>                obj .: "bidDepth"
-              <*>                obj .: "askDepth"
-              <*>                obj .: "last"
-              <*>                obj .: "lastSize"
-              <*> (parseTime =<< obj .: "lastTrade")
-              <*> (parseTime =<< obj .: "quoteTime")
+        Quote <$>                obj .:  "symbol"
+              <*>                obj .:  "venue"
+              <*>                obj .:? "bid"
+              <*>                obj .:? "ask"
+              <*>                obj .:  "bidSize"
+              <*>                obj .:  "askSize"
+              <*>                obj .:  "bidDepth"
+              <*>                obj .:  "askDepth"
+              <*>                obj .:  "last"
+              <*>                obj .:  "lastSize"
+              <*> (parseTime =<< obj .:  "lastTrade")
+              <*> (parseTime =<< obj .:  "quoteTime")
+
+instance FromJSON Execution where
+    parseJSON = withObject "Execution" $ \obj ->
+        Execution <$>                obj .: "account"
+                  <*>                obj .: "venue"
+                  <*>                obj .: "symbol"
+                  <*>                obj .: "order"
+                  <*>                obj .: "standingId"
+                  <*>                obj .: "incomingId"
+                  <*>                obj .: "price"
+                  <*>                obj .: "filled"
+                  <*> (parseTime =<< obj .: "filledAt")
+                  <*>                obj .: "standingComplete"
+                  <*>                obj .: "incomingComplete"
 
 instance FromJSON Stock where
     parseJSON = withObject "Stock" $ \obj ->

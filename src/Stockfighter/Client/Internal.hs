@@ -1,4 +1,5 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Stockfighter.Client.Internal
   ( module Control.Monad.Except
@@ -19,21 +20,36 @@ module Stockfighter.Client.Internal
   , delete
   , deleteVenue
 
+  , Tape
+  , EndTape(..)
+  , tape
+  , tapeWith
+
   , SfResp(..) -- Not to be re-exported
   ) where
 
+import           Control.Concurrent
+import           Control.Exception
 import           Control.Lens
 import           Control.Monad.Reader
 import           Control.Monad.Except
 import           Data.Aeson
 import qualified Data.ByteString.Char8 as C8
 import qualified Data.ByteString.Lazy  as L
+import           Network.WebSockets
 import qualified Network.Wreq       as W
 import qualified Network.Wreq.Types as W
+import           Wuss
 
 
 apiBaseUrl :: String
 apiBaseUrl = "https://api.stockfighter.io/ob/api/"
+
+wsBaseUrl :: String
+wsBaseUrl = "api.stockfighter.io"
+
+wsBasePath :: String
+wsBasePath = "/ob/api/ws/"
 
 
 ---- StockfighterT
@@ -120,6 +136,52 @@ deleteVenue :: (MonadIO m, FromJSON a) => String -> StockfighterT m a
 deleteVenue s = do
     _venue <- asks optVenue
     delete ("venues/" ++ _venue ++ "/" ++ s)
+
+
+---- WebSockets
+
+type Tape a = Chan (Either EndTape a)
+
+data EndTape = MessageNotJSON
+             | MissingValue
+             | FailedDecode String
+             | SocketClosed
+             | Killed
+             | IOE IOException
+               deriving Show
+
+
+tape :: (MonadIO m, FromJSON a) => String -> m (ThreadId, Tape a)
+tape s = tapeWith s Just
+
+tapeWith :: (MonadIO m, FromJSON a) => String -> (Value -> Maybe Value) -> m (ThreadId, Tape a)
+tapeWith path f = liftIO $ runSecureClient wsBaseUrl 443 (wsBasePath ++ path) parseMessages -- TODO: handle connect exceptions, close connection properly
+
+    where
+    parseMessages :: FromJSON a => Connection -> IO (ThreadId, Tape a)
+    parseMessages conn = liftIO $ do
+        chan <- newChan
+
+        let loop = (do
+              dataMessage <- receiveDataMessage conn
+              let message = case dataMessage of
+                                Binary m -> m
+                                Text   m -> m
+                  decoded = eitherDecode' message :: Either String Value
+
+              case decoded of
+                  Left  _ -> writeChan chan (Left MessageNotJSON)
+                  Right a -> case fromJSON <$> f a of
+                      Nothing            -> writeChan chan (Left MissingValue)
+                      Just (Error e)     -> writeChan chan (Left (FailedDecode e))
+                      Just (Success val) -> writeChan chan (Right val) >> loop)
+                `catch` \ThreadKilled        -> writeChan chan (Left Killed)
+                `catch` \ConnectionClosed    -> writeChan chan (Left SocketClosed)
+                `catch` \(ParseException s)  -> writeChan chan (Left (FailedDecode s))
+                `catch` \(ex :: IOException) -> writeChan chan (Left (IOE ex))
+
+        tid <- forkIO loop
+        return (tid, chan)
 
 
 ---- General

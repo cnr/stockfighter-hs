@@ -6,6 +6,9 @@ module Stockfighter.Client
   , StockfighterT
   , runStockfighter
 
+  , Tape
+  , EndTape(..)
+
   -- GET
   , allOrders
   , heartbeat
@@ -21,8 +24,15 @@ module Stockfighter.Client
 
   -- DELETE
   , cancelOrder
+
+  -- WebSockets
+  , tickerTape
+  , tickerTapeStock
+  , executions
+  , executionsStock
   ) where
 
+import           Control.Concurrent
 import           Control.Lens hiding ((.=))
 import           Control.Monad.Reader
 import           Data.Aeson
@@ -100,3 +110,30 @@ cancelOrder :: MonadIO m
             -> Int    -- Order ID
             -> StockfighterT m UserOrder
 cancelOrder stock orderId = deleteVenue ("stocks/" ++ stock ++ "/orders/" ++ show orderId)
+
+
+---- Websockets
+
+tickerTape :: MonadIO m => StockfighterT m (ThreadId, Tape Quote)
+tickerTape = do
+    _account <- asks optAccount
+    _venue   <- asks optVenue
+    tapeWith (_account ++ "/venues/" ++ _venue ++ "/tickertape") (^? key "quote")
+
+tickerTapeStock :: MonadIO m => String -> StockfighterT m (ThreadId, Tape Quote)
+tickerTapeStock stock = do
+    _account <- asks optAccount
+    _venue   <- asks optVenue
+    tapeWith (_account ++ "/venues/" ++ _venue ++ "/tickertape/stocks/" ++ stock) (^? key "quote")
+
+executions :: MonadIO m => StockfighterT m (ThreadId, Tape Execution)
+executions = do
+    _account <- asks optAccount
+    _venue   <- asks optVenue
+    tape (_account ++ "/venues/" ++ _venue ++ "/executions")
+
+executionsStock :: MonadIO m => String -> StockfighterT m (ThreadId, Tape Execution)
+executionsStock stock = do
+    _account <- asks optAccount
+    _venue   <- asks optVenue
+    tape (_account ++ "/venues/" ++ _venue ++ "/executions/stocks/" ++ stock)
