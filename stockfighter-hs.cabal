@@ -14,7 +14,8 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Stockfighter.Client
+  exposed-modules:     Stockfighter
+                     , Stockfighter.Client
                      , Stockfighter.Types
   other-modules:       Stockfighter.Client.Internal
   build-depends:       base >= 4.7 && < 5
