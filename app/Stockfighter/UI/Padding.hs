@@ -73,20 +73,20 @@ instance Padded Widget where
 -- 2. prerender (See `listPrerender`)
 
 instance Padded b => Padded (VPadded b) where
-    padTo     = listPadTo runVPadded vPadding
+    padTo     = listPadTo runVPadded vertPadOpts
     prerender = listPrerender runVPadded maximum sum
 
 instance Padded b => Padded (HPadded b) where
-    padTo     = listPadTo runHPadded hPadding
+    padTo     = listPadTo runHPadded horizPadOpts
     prerender = listPrerender runHPadded sum maximum
 
 
 listPadTo :: Padded b
           => (c -> [b]) -- toList (of Padded components)
-          -> (forall x. Padded x => [x] -> RenderM Result) -- see padWith
+          -> PadOpts
           -> Int -> Int -> c -> RenderM Result
-listPadTo toListC padWithC width height =
-    withReaderT offset . padWithC . toListC
+listPadTo toListC padOpts width height =
+    withReaderT offset . padWith padOpts . toListC
     where
     offset :: Context -> Context
     offset c = c & availWidthL  .~ width
@@ -107,16 +107,13 @@ listPrerender toListC widthA heightA c = do
 
 ---- Padding functions
 
-vPad :: Padded b => [b] -> Widget -- TODO: fix vertical size?
-vPad xs = Widget Fixed Fixed (vPadding xs) -- TODO: greedy when appropriate?
-
-vPadding :: Padded b => [b] -> RenderM Result
-vPadding = padWith vertPadOpts
+vPad :: Padded b => [b] -> Widget
+vPad = listPad vertPadOpts
 
 vertPadOpts :: PadOpts
 vertPadOpts = PadOpts { psizeP       = sHeight
                       , psizeS       = sWidth
-                      , ctxP         = availHeight
+                      , ctxPL        = availHeightL
                       , imgSizeP     = imageHeight
                       , centerImageP = centerImageV
                       , imgJoinP     = vertJoin
@@ -124,22 +121,33 @@ vertPadOpts = PadOpts { psizeP       = sHeight
                       , padToS       = padTo
                       }
 
-hPad :: Padded b => [b] -> Widget -- TODO: fix horizontal size?
-hPad xs = Widget Fixed Fixed (hPadding xs) -- TODO: greedy when appropriate?
-
-hPadding :: Padded b => [b] -> RenderM Result
-hPadding = padWith horizPadOpts
+hPad :: Padded b => [b] -> Widget
+hPad = listPad horizPadOpts
 
 horizPadOpts :: PadOpts
 horizPadOpts = PadOpts { psizeP       = sWidth
                        , psizeS       = sHeight
-                       , ctxP         = availWidth
+                       , ctxPL        = availWidthL
                        , imgSizeP     = imageWidth
                        , centerImageP = centerImageH
                        , imgJoinP     = horizJoin
                        , padP         = \amount -> pad 0 0 amount 0
                        , padToS       = flip padTo
                        }
+
+listPad :: Padded b => PadOpts -> [b] -> Widget
+listPad opts@PadOpts{..} xs = Widget Fixed Fixed $ do -- TODO: Greedy?
+    -- Constrain our primary dimension to the greatest `Fixed` child's,
+    -- then delegate to padWith
+    prerendered <- traverse prerender xs
+
+    let maybePrimaries = sequence (prerendered ^.. folded . to psizeP)
+
+    let limit = case maybePrimaries of
+          Just primaries -> withReaderT (ctxPL .~ sum primaries)
+          Nothing        -> id
+
+    limit (padWith opts xs)
 
 -- Padding options.
 -- The "primary" dimension is the one in which padding is being inserted.
@@ -148,7 +156,7 @@ data PadOpts = PadOpts { -- PSize getters for each dimension
                          psizeP       :: PSize   -> Maybe Int
                        , psizeS       :: PSize   -> Maybe Int
                          -- Context `remaining size` getter
-                       , ctxP         :: Context -> Int
+                       , ctxPL        :: Lens' Context Int
                          -- Image size getter
                        , imgSizeP     :: Image   -> Int
                          -- Center an image on the primary dimension
@@ -159,7 +167,7 @@ data PadOpts = PadOpts { -- PSize getters for each dimension
                        , padP         :: Int     -> Image -> Image
                          -- padTo with a corrected argument order
                          -- (ordinarily `width -> height -> ...`)
-                       , padToS       :: Int -> forall b. Padded b => Int -> b -> RenderM Result
+                       , padToS       :: forall b. Padded b => Int -> Int -> b -> RenderM Result
                        }
 
 -- Pad a container with the given options.
@@ -191,10 +199,10 @@ padWith PadOpts{..} xs = do
 
     insertPadding :: [Result] -> RenderM Result
     insertPadding [result] = do
-        avail <- asks ctxP
+        avail <- asks (^. ctxPL)
         return (Result (centerImageP avail (image result)) [] []) -- TODO: translate
     insertPadding results = do
-        availP <- asks ctxP
+        availP <- asks (^. ctxPL)
 
         let totalP  = sum (results ^.. folded . to image . to imgSizeP)
             padSize = availP - totalP
@@ -213,7 +221,7 @@ padWith PadOpts{..} xs = do
                  -> [(Maybe Int,b)] -- maybe primary, item
                  -> RenderM Result
     expandGreedy secondary sizes = do
-        availP <- asks ctxP
+        availP <- asks (^. ctxPL)
 
         let totalP    = sum (sizes ^.. folded . _1 . _Just)
             padSize   = availP - totalP
@@ -233,7 +241,7 @@ padWith PadOpts{..} xs = do
                     Just prim -> (prim  , numRem    , padRem)
                     Nothing   -> (greedy, numRem - 1, padRem - greedy)
                     where
-                    greedy = numRem `div` padRem
+                    greedy = padRem `div` numRem
         image <- growGreedy numGreedy padSize sizes
         return (Result image [] []) -- TODO: translate
 
