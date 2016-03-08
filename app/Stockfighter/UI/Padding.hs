@@ -181,11 +181,11 @@ padWith :: Padded b => PadOpts -> [b] -> RenderM Result
 padWith PadOpts{..} xs = do
     prerendered <- traverse prerender xs
 
-    let primary = maximum (prerendered ^.. folded . to psizeS . _Just)
+    let secondary = maximum (prerendered ^.. folded . to psizeS . _Just)
 
     case sequence (prerendered ^.. folded . to psizeP) of
-        Just secondaries -> insertPadding =<< zipWithM (padToS primary) secondaries xs
-        Nothing          -> expandGreedy primary (zip (map psizeP prerendered) xs)
+        Just primaries -> insertPadding =<< zipWithM (padToS secondary) primaries xs
+        Nothing        -> expandGreedy secondary (zip (map psizeP prerendered) xs)
 
     where
 
@@ -196,8 +196,8 @@ padWith PadOpts{..} xs = do
     insertPadding results = do
         availP <- asks ctxP
 
-        let totalS  = sum (results ^.. folded . to image . to imgSizeP)
-            padPize = availP - totalS
+        let totalP  = sum (results ^.. folded . to image . to imgSizeP)
+            padSize = availP - totalP
 
             padBetween :: Int -> [Image] -> Image
             padBetween padRem [r,s]    = imgJoinP (padP padRem r) s
@@ -206,13 +206,36 @@ padWith PadOpts{..} xs = do
                 p = padRem `div` (length (r:s:ts) - 1)
             padBetween _ _ = emptyImage
 
-        return (Result (padBetween padPize (map image results)) [] []) -- TODO: translate
+        return (Result (padBetween padSize (map image results)) [] []) -- TODO: translate
 
     expandGreedy :: Padded b
-                 => Int -- primary direction for padTo
-                 -> [(Maybe Int,b)] -- secondary, item
+                 => Int -- secondary size for padTo
+                 -> [(Maybe Int,b)] -- maybe primary, item
                  -> RenderM Result
-    expandGreedy = undefined -- TODO: implement
+    expandGreedy secondary sizes = do
+        availP <- asks ctxP
+
+        let totalP    = sum (sizes ^.. folded . _1 . _Just)
+            padSize   = availP - totalP
+            numGreedy = length (sizes ^.. folded . _1 . _Nothing)
+
+            growGreedy :: Padded b
+                       => Int -- Number of greedy components remaining
+                       -> Int -- Remaining size for greedy components
+                       -> [(Maybe Int, b)] -- maybe primary, item
+                       -> RenderM Image
+            growGreedy _ _ [] = return emptyImage
+            growGreedy numRem padRem ((maybePrimary,b):rest) =
+                imgJoinP <$> (image <$> padToS secondary primary b)
+                         <*> growGreedy numRem' padRem' rest
+                where
+                (primary,numRem',padRem') = case maybePrimary of
+                    Just prim -> (prim  , numRem    , padRem)
+                    Nothing   -> (greedy, numRem - 1, padRem - greedy)
+                    where
+                    greedy = numRem `div` padRem
+        image <- growGreedy numGreedy padSize sizes
+        return (Result image [] []) -- TODO: translate
 
 
 ---- Helpful (Misc)
