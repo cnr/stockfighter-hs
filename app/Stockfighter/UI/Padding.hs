@@ -6,6 +6,13 @@ module Stockfighter.UI.Padding
   , vPad
   , HPadded(..)
   , VPadded(..)
+
+  , leftJustify
+  , leftJustifyAttr
+  , rightJustify
+  , rightJustifyAttr
+  , fullJustify
+  , fullJustifyAttr
   ) where
 
 import Brick
@@ -244,6 +251,38 @@ padWith PadOpts{..} xs = do
                     greedy = padRem `div` numRem
         image <- growGreedy numGreedy padSize sizes
         return (Result image [] []) -- TODO: translate
+
+
+---- Justified text
+-- Insert padding as appropriate to horizontally-justify text in a
+-- vertically-padded container
+
+leftJustify :: [String] -> VPadded Widget
+leftJustify = leftJustifyAttr . map ((,) mempty)
+
+leftJustifyAttr :: [(AttrName, String)] -> VPadded Widget
+leftJustifyAttr = justifyAttr (padRight Max)
+
+rightJustify :: [String] -> VPadded Widget
+rightJustify = rightJustifyAttr . map ((,) mempty)
+
+rightJustifyAttr :: [(AttrName, String)] -> VPadded Widget
+rightJustifyAttr = justifyAttr (padLeft Max)
+
+justifyAttr :: (Widget -> Widget) -> [(AttrName, String)] -> VPadded Widget
+justifyAttr padder xss =
+    let maxLen = maximum (xss ^.. folded . _2 . to length)
+     in VPadded [padder' (withAttr attr (str xs))
+                        | (attr,xs) <- xss
+                        , let padder' = if length xs == maxLen
+                                            then id
+                                            else padder]
+
+fullJustify :: [String] -> VPadded Widget
+fullJustify = VPadded . map str
+
+fullJustifyAttr :: [(AttrName, String)] -> VPadded Widget
+fullJustifyAttr = VPadded . map (uncurry withAttr . over _2 str)
 
 
 ---- Helpful (Misc)
