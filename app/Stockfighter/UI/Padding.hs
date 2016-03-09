@@ -60,9 +60,9 @@ data PSize = PSize { sWidth  :: Maybe Int
 --   2a. If the widget is Fixed on an axis, the smallest area required
 --       to render can be easily determined
 instance Padded Widget where
-    padTo width height w = do -- TODO: translate result
-        Result preimage _ _ <- render . hLimit width . vLimit height $ w
-        return $ Result (centerImageV height (centerImageH width preimage)) [] []
+    padTo width height w = do
+        result <- render . hLimit width . vLimit height $ w
+        return $ centerImageV height (centerImageH width result)
 
     prerender w = do
         rendered <- image <$> render w
@@ -126,6 +126,7 @@ vertPadOpts = PadOpts { psizeP       = sHeight
                       , imgJoinP     = vertJoin
                       , padP         = pad 0 0 0
                       , padToS       = padTo
+                      , mkOnOriginS  = \p -> Location (0,p)
                       }
 
 hPad :: Padded b => [b] -> Widget
@@ -140,6 +141,7 @@ horizPadOpts = PadOpts { psizeP       = sWidth
                        , imgJoinP     = horizJoin
                        , padP         = \amount -> pad 0 0 amount 0
                        , padToS       = flip padTo
+                       , mkOnOriginS  = \p -> Location (p,0)
                        }
 
 listPad :: Padded b => PadOpts -> [b] -> Widget
@@ -160,21 +162,25 @@ listPad opts@PadOpts{..} xs = Widget Fixed Fixed $ do -- TODO: Greedy?
 -- The "primary" dimension is the one in which padding is being inserted.
 -- Fields ending in "P" are for the primary dimension; "S" otherwise.
 data PadOpts = PadOpts { -- PSize getters for each dimension
-                         psizeP       :: PSize   -> Maybe Int
-                       , psizeS       :: PSize   -> Maybe Int
+                         psizeP       :: PSize -> Maybe Int
+                       , psizeS       :: PSize -> Maybe Int
                          -- Context `remaining size` getter
                        , ctxPL        :: Lens' Context Int
                          -- Image size getter
-                       , imgSizeP     :: Image   -> Int
+                       , imgSizeP     :: Image -> Int
                          -- Center an image on the primary dimension
-                       , centerImageP :: Int     -> Image -> Image
+                       , centerImageP :: Int   -> Result -> Result
                          -- Join two images on the primary dimension
-                       , imgJoinP     :: Image   -> Image -> Image
+                       , imgJoinP     :: Image -> Image  -> Image
                          -- Padding function for the primary dimension
-                       , padP         :: Int     -> Image -> Image
+                       , padP         :: Int   -> Image  -> Image
                          -- padTo with a corrected argument order
                          -- (ordinarily `width -> height -> ...`)
                        , padToS       :: forall b. Padded b => Int -> Int -> b -> RenderM Result
+                         -- Create a point on the secondary
+                         -- axis' origin, with the specified primary
+                         -- coordinate
+                       , mkOnOriginS  :: Int   -> Location
                        }
 
 -- Pad a container with the given options.
@@ -207,21 +213,37 @@ padWith PadOpts{..} xs = do
     insertPadding :: [Result] -> RenderM Result
     insertPadding [result] = do
         avail <- asks (^. ctxPL)
-        return (Result (centerImageP avail (image result)) [] []) -- TODO: translate
+        return (centerImageP avail result)
+
     insertPadding results = do
         availP <- asks (^. ctxPL)
 
         let totalP  = sum (results ^.. folded . to image . to imgSizeP)
-            padSize = availP - totalP
+            pads    = buildPadding (availP - totalP) (length results - 1)
 
-            padBetween :: Int -> [Image] -> Image
-            padBetween padRem [r,s]    = imgJoinP (padP padRem r) s
-            padBetween padRem (r:s:ts) = imgJoinP (padP p r) (padBetween (padRem - p) (s:ts))
+            buildPadding :: Int -> Int -> [Int]
+            buildPadding 0     0    = []
+            buildPadding total size = amount : buildPadding remaining (size - 1)
                 where
-                p = padRem `div` (length (r:s:ts) - 1)
-            padBetween _ _ = emptyImage
+                amount    = total `div` size
+                remaining = total - amount
 
-        return (Result (padBetween padSize (map image results)) [] []) -- TODO: translate
+            paddedResults :: [Result]
+            paddedResults = zipWith (\pad' res' -> res' & imageL %~ padP pad')
+                                    pads results
+                                 ++ [last results]
+
+            joinedResult :: Result
+            joinedResult = foldl go (Result emptyImage [] []) paddedResults
+                where
+                go :: Result -> Result -> Result
+                go acc res = acc & imageL   %~ (`imgJoinP` image res')
+                                 & cursorsL %~ (++ cursors res')
+                                 & visibilityRequestsL %~ (++ visibilityRequests res')
+                    where
+                    res' :: Result
+                    res' = addResultOffset (mkOnOriginS (acc ^. imageL . to imgSizeP)) res
+        return joinedResult
 
     expandGreedy :: Padded b
                  => Int -- secondary size for padTo
@@ -287,18 +309,24 @@ fullJustifyAttr = VPadded . map (uncurry withAttr . over _2 str)
 
 ---- Helpful (Misc)
 
-centerImageH :: Int -> Image -> Image
-centerImageH width img
-  | imageWidth img >= width = img
-  | otherwise               = pad padl 0 padr 0 img
+centerImageH :: Int -> Result -> Result
+centerImageH width res
+  | imageWidth img >= width = res
+  | otherwise = addResultOffset (Location (padl, 0))
+                                (res & imageL %~ pad padl 0 padr 0)
     where
+    img = image res
+
     padl = (width - imageWidth img) `div` 2
     padr = width - imageWidth img - padl
 
-centerImageV :: Int -> Image -> Image
-centerImageV height img
-  | imageHeight img >= height = img
-  | otherwise                 = pad 0 padt 0 padb img
+centerImageV :: Int -> Result -> Result
+centerImageV height res
+  | imageHeight img >= height = res
+  | otherwise = addResultOffset (Location (0,padt))
+                                (res & imageL %~ pad 0 padt 0 padb)
     where
+    img = image res
+
     padt = (height - imageHeight img) `div` 2
     padb = height - imageHeight img - padt
