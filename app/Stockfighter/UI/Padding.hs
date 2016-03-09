@@ -19,6 +19,7 @@ import Brick
 import Control.Lens hiding (Context)
 import Control.Monad
 import Control.Monad.Reader
+import Data.Foldable
 import Graphics.Vty.Image
 
 
@@ -227,32 +228,14 @@ padWith PadOpts{..} xs = do
     insertPadding results = do
         availP <- asks (^. ctxPL)
 
-        let totalP  = sum (results ^.. folded . to image . to imgSizeP)
-            pads    = buildPadding (availP - totalP) (length results - 1)
-
-            buildPadding :: Int -> Int -> [Int]
-            buildPadding 0     0    = []
-            buildPadding total size = amount : buildPadding remaining (size - 1)
-                where
-                amount    = total `div` size
-                remaining = total - amount
+        let totalP = sum (results ^.. folded . to image . to imgSizeP)
+            pads   = buildPadding (availP - totalP) (length results - 1)
 
             paddedResults :: [Result]
             paddedResults = zipWith (\pad' res' -> res' & imageL %~ padP pad')
                                     pads results
                                  ++ [last results]
-
-            joinedResult :: Result
-            joinedResult = foldl go (Result emptyImage [] []) paddedResults
-                where
-                go :: Result -> Result -> Result
-                go acc res = acc & imageL   %~ (`imgJoinP` image res')
-                                 & cursorsL %~ (++ cursors res')
-                                 & visibilityRequestsL %~ (++ visibilityRequests res')
-                    where
-                    res' :: Result
-                    res' = addResultOffset (mkOnOriginS (acc ^. imageL . to imgSizeP)) res
-        return joinedResult
+        return (joinResults paddedResults)
 
     expandGreedy :: Padded b
                  => Int -- secondary size for padTo
@@ -261,27 +244,41 @@ padWith PadOpts{..} xs = do
     expandGreedy secondary sizes = do
         availP <- asks (^. ctxPL)
 
-        let totalP    = sum (sizes ^.. folded . _1 . _Just)
-            padSize   = availP - totalP
-            numGreedy = length (sizes ^.. folded . _1 . _Nothing)
+        let totalP     = sum (sizes ^.. folded . _1 . _Just)
+            greedCount = length (sizes ^.. folded . _1 . _Nothing)
+            pads       = buildPadding (availP - totalP) greedCount
 
-            growGreedy :: Padded b
-                       => Int -- Number of greedy components remaining
-                       -> Int -- Remaining size for greedy components
-                       -> [(Maybe Int, b)] -- maybe primary, item
-                       -> RenderM Image
-            growGreedy _ _ [] = return emptyImage
-            growGreedy numRem padRem ((maybePrimary,b):rest) =
-                imgJoinP <$> (image <$> padToS secondary primary b)
-                         <*> growGreedy numRem' padRem' rest
+            growGreedy :: Padded b => [(Maybe Int, b)] -> RenderM [Result]
+            growGreedy cmps = reverse . fst <$> foldlM go ([], pads) cmps
                 where
-                (primary,numRem',padRem') = case maybePrimary of
-                    Just prim -> (prim  , numRem    , padRem)
-                    Nothing   -> (greedy, numRem - 1, padRem - greedy)
-                    where
-                    greedy = padRem `div` numRem
-        image <- growGreedy numGreedy padSize sizes
-        return (Result image [] []) -- TODO: translate
+                go (rs,ps) (maybePrimary, b) = case maybePrimary of
+                    Just prim -> do
+                        rendered <- padToS secondary prim b
+                        return (rendered : rs, ps)
+                    Nothing   -> do
+                        let (p':ps') = ps
+                        rendered <- padToS secondary p' b
+                        return (rendered : rs, ps')
+
+        joinResults <$> growGreedy sizes
+
+    buildPadding :: Int -> Int -> [Int]
+    buildPadding 0     0    = []
+    buildPadding total size = amount : buildPadding remaining (size - 1)
+        where
+        amount    = total `div` size
+        remaining = total - amount
+
+    joinResults :: [Result] -> Result
+    joinResults = foldl go (Result emptyImage [] [])
+        where
+        go :: Result -> Result -> Result
+        go acc res = acc & imageL   %~ (`imgJoinP` image res')
+                         & cursorsL %~ (++ cursors res')
+                         & visibilityRequestsL %~ (++ visibilityRequests res')
+            where
+            res' :: Result
+            res' = addResultOffset (mkOnOriginS (acc ^. imageL . to imgSizeP)) res
 
 
 ---- Justified text
