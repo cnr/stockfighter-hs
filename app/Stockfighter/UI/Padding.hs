@@ -144,8 +144,17 @@ horizPadOpts = PadOpts { psizeP       = sWidth
                        , mkOnOriginS  = \p -> Location (p,0)
                        }
 
+-- We're huge liars about being Fixed in both directions:
+-- - HPadded containers are greedy horizontally
+-- - VPadded containers are greedy vertically
+-- (Widgets produced by hPad and vPad really *are* Fixed, though)
+--
+-- We're lying here to maintain prerender size calculations
+-- as they're passed up to parent containers. As result, expect
+-- padded containers to behave erratically if you nest two of
+-- the same type.
 listPad :: Padded b => PadOpts -> [b] -> Widget
-listPad opts@PadOpts{..} xs = Widget Fixed Fixed $ do -- TODO: Greedy?
+listPad opts@PadOpts{..} xs = Widget Fixed Fixed $ do
     -- Constrain our primary dimension to the greatest `Fixed` child's,
     -- then delegate to padWith
     prerendered <- traverse prerender xs
