@@ -239,15 +239,15 @@ reify (RPadded axis size rest) = do
         remaining = total - amount
 
     joinResults :: PadOpts -> [Result] -> Result
-    joinResults PadOpts{..} = foldl go (Result emptyImage [] [])
+    joinResults PadOpts{..} = foldr go (Result emptyImage [] [])
         where
         go :: Result -> Result -> Result
-        go acc res = acc & imageL   %~ (`imgJoinP` image res')
-                         & cursorsL %~ (++ cursors res')
-                         & visibilityRequestsL %~ (++ visibilityRequests res')
+        go res acc = res & imageL   %~ (`imgJoinP` image acc')
+                         & cursorsL %~ (++ cursors acc')
+                         & visibilityRequestsL %~ (++ visibilityRequests acc')
             where
-            res' :: Result
-            res' = addResultOffset (mkOnOriginS (acc ^. imageL . to imgSizeP)) res
+            acc' :: Result
+            acc' = addResultOffset (mkOnOriginS (res ^. imageL . to imgSizeP)) acc
 
 -- Padding options.
 -- The "primary" dimension is the one in which padding is being inserted.
