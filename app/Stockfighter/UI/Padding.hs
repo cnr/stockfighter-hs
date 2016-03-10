@@ -1,11 +1,17 @@
+{-# LANGUAGE DataKinds       #-}
 {-# LANGUAGE RankNTypes      #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TypeFamilies    #-}
 
 module Stockfighter.UI.Padding
-  ( hPad
-  , vPad
-  , HPadded(..)
-  , VPadded(..)
+  ( Axis(..)
+  , Layout(..)
+  , rowP
+  , colP
+  , row
+  , col
+  , reifyRow
+  , reifyCol
 
   , leftJustify
   , leftJustifyAttr
@@ -15,217 +21,205 @@ module Stockfighter.UI.Padding
   , fullJustifyAttr
   ) where
 
-import Brick
+import Brick hiding (row)
 import Control.Lens hiding (Context)
 import Control.Monad
 import Control.Monad.Reader
-import Data.Foldable
+import Data.Maybe (fromJust)
 import Graphics.Vty.Image
 
 
----- Padded container types
+---- Padded layouts
+-- Layouts are padded (Greedy) on a primary axis, either Horiz(ontal)
+-- or Vert(ical). The secondary axis of a Layout is Fixed in size
+-- equivalent to the widest/talltest (as appropriate) child
+--
+-- More concretely: a "row" is padded vertically, fixed horizontally
+--                  a "col" is padded horizontally, fixed vertically
 
--- A vertically-padded container, with its width
--- fixed at that of the widest `Fixed`-width child
-newtype VPadded a = VPadded { runVPadded :: [a] }
+-- Layouts can be padded on one of two axes
+data Axis = Horiz | Vert
 
--- A horizontally-padded container, with its height
--- fixed at that of the tallest `Fixed`-height child
-newtype HPadded a = HPadded { runHPadded :: [a] }
+-- OtherAxis is used to ensure that we don't nest two layouts sharing
+-- a primary axis.
+type family OtherAxis (a :: Axis) :: Axis where
+    OtherAxis 'Horiz = 'Vert
+    OtherAxis 'Vert  = 'Horiz
+
+otherAxis :: Axis -> Axis
+otherAxis Horiz = Vert
+otherAxis Vert  = Horiz
+
+data Layout (axis :: Axis) a
+      = Leaf a
+      | Padded [Layout (OtherAxis axis) a]
 
 
----- Padded typeclass
+-- Combinators
+colP :: [Layout 'Horiz a] -> Layout 'Vert a
+colP = Padded
 
--- A class of data types that can be rendered, as well as:
--- 1. padTo
---   1a. crop this component to a certain size, if larger than desired
---   1b. insert padding as appropriate to reach the desired size
--- 2. prerender
---   2a. determine the smallest area required to render this component
-class Padded b where
-    prerender ::               b -> RenderM PSize
-    padTo     :: Int -> Int -> b -> RenderM Result
+rowP :: [Layout 'Vert a] -> Layout 'Horiz a
+rowP = Padded
+
+row :: [a] -> Layout 'Horiz a
+row = Padded . map Leaf
+
+col :: [a] -> Layout 'Vert a
+col = Padded . map Leaf
+
+
+reifyCol :: Layout 'Vert Widget -> Widget
+reifyCol = reifyAxis Vert
+
+reifyRow :: Layout 'Horiz Widget -> Widget
+reifyRow = reifyAxis Horiz
+
+
+---- Prerendering
+-- A single-pass (pre)render is performed to determine the minimum size
+-- required to fit all components
+--
+-- If a particular Widget is Fixed on both axes, we can keep
+-- the rendered result to avoid rendering a second time.
+--
+-- We also reify the axes into concrete types for later rendering.
+
+data Prerendered a = RLeaf   Axis MinSize (Either Widget Result)
+                   | RPadded Axis MinSize [Prerendered a]
 
 -- The smallest fixed size of a given component
 -- (or Nothing if the component is Greedy)
-data PSize = PSize { sWidth  :: Maybe Int
-                   , sHeight :: Maybe Int
-                   }
+data MinSize = MinSize { minWidth  :: Maybe Int
+                       , minHeight :: Maybe Int
+                       } deriving Show
 
--- Widgets are Padded.
--- 1. padTo
---   1a. Render this component with limits set to the desired size
---   1b. If the rendered Image is smaller than desired, add equal
---       to each side to center it
--- 2. prerender
---   2a. If the widget is Fixed on an axis, the smallest area required
---       to render can be easily determined
-instance Padded Widget where
-    padTo width height w = do
-        result <- render . hLimit width . vLimit height $ w
-        return $ centerImageV height (centerImageH width result)
+prerender' :: Axis -> Layout a Widget -> RenderM (Prerendered Widget)
+prerender' axis (Leaf widget) = do
+    rendered <- render widget
 
-    prerender w = do
-        rendered <- image <$> render w
+    let img   = image rendered
+        width = case hSize widget of
+            Fixed  -> Just $ imageWidth img
+            Greedy -> Nothing
+        height = case vSize widget of
+            Fixed  -> Just $ imageHeight img
+            Greedy -> Nothing
 
-        let width = case hSize w of
-                Fixed  -> Just $ imageWidth rendered
-                Greedy -> Nothing
-            height = case vSize w of
-                Fixed  -> Just $ imageHeight rendered
-                Greedy -> Nothing
-        return $ PSize width height
+        result = if vSize widget == Fixed && hSize widget == Fixed
+                    then Right rendered
+                    else Left widget
+    return $ RLeaf axis (MinSize width height) result
 
--- Padded containers are Padded
--- 1. padTo (See `padWith`)
--- 2. prerender (See `listPrerender`)
+prerender' axis (Padded xs) = do
+    prerendered <- traverse (prerender' (otherAxis axis)) xs
+    let PadOpts{..} = axisOpts axis
+        sizes       = prerendered ^.. folded . to preMinSize
+        width       = widthA  (sizes ^.. folded . to minWidth  . _Just)
+        height      = heightA (sizes ^.. folded . to minHeight . _Just)
+    return $ RPadded axis (MinSize (Just width) (Just height)) prerendered
 
-instance Padded b => Padded (VPadded b) where
-    padTo     = listPadTo runVPadded vertPadOpts
-    prerender = listPrerender runVPadded maximum sum
-
-instance Padded b => Padded (HPadded b) where
-    padTo     = listPadTo runHPadded horizPadOpts
-    prerender = listPrerender runHPadded sum maximum
+preMinSize :: Prerendered a -> MinSize
+preMinSize (RLeaf   _ size _) = size
+preMinSize (RPadded _ size _) = size
 
 
-listPadTo :: Padded b
-          => (c -> [b]) -- toList (of Padded components)
-          -> PadOpts
-          -> Int -> Int -> c -> RenderM Result
-listPadTo toListC padOpts width height =
-    withReaderT offset . padWith padOpts . toListC
-    where
-    offset :: Context -> Context
-    offset c = c & availWidthL  .~ width
-                 & availHeightL .~ height
+---- Rendering
+
+-- RIP type safety
+-- Initiate the prerender pass and determine the size of our primary
+-- axis. If all of our children are greedy on this axis, so are we.
+-- (otherwise, constrain the render to the smallest child on this axis)
+reifyAxis :: Axis -> Layout a Widget -> Widget
+reifyAxis axis layout = Widget Fixed Fixed $ do
+     prerendered <- prerender' axis layout
+
+     let PadOpts{..}  = axisOpts axis
+         maybePrimary = minSizeP (preMinSize prerendered)
+
+     let limit = case maybePrimary of
+           -- Fixed
+           Just primary -> withReaderT (ctxPL .~ primary)
+           -- Greedy
+           Nothing      -> id
+
+     limit (reify prerendered)
 
 
-listPrerender :: Padded b
-              => (c -> [b]) -- toList (of Padded components)
-              -> ([Int] -> Int) -- Width algebra
-              -> ([Int] -> Int) -- Height algebra
-              -> c -> RenderM PSize
-listPrerender toListC widthA heightA c = do
-    prerendered <- traverse prerender (toListC c)
-    let width  = widthA  <$> sequence (prerendered ^.. folded . to sWidth)
-        height = heightA <$> sequence (prerendered ^.. folded . to sHeight)
-    return $ PSize width height
-
-
----- Padding functions
-
-vPad :: Padded b => [b] -> Widget
-vPad = listPad vertPadOpts
-
-vertPadOpts :: PadOpts
-vertPadOpts = PadOpts { psizeP       = sHeight
-                      , psizeS       = sWidth
-                      , ctxPL        = availHeightL
-                      , imgSizeP     = imageHeight
-                      , centerImageP = centerImageV
-                      , imgJoinP     = vertJoin
-                      , padP         = pad 0 0 0
-                      , padToS       = padTo
-                      , mkOnOriginS  = \p -> Location (0,p)
-                      }
-
-hPad :: Padded b => [b] -> Widget
-hPad = listPad horizPadOpts
-
-horizPadOpts :: PadOpts
-horizPadOpts = PadOpts { psizeP       = sWidth
-                       , psizeS       = sHeight
-                       , ctxPL        = availWidthL
-                       , imgSizeP     = imageWidth
-                       , centerImageP = centerImageH
-                       , imgJoinP     = horizJoin
-                       , padP         = \amount -> pad 0 0 amount 0
-                       , padToS       = flip padTo
-                       , mkOnOriginS  = \p -> Location (p,0)
-                       }
-
--- We're huge liars about being Fixed in both directions:
--- - HPadded containers are greedy horizontally
--- - VPadded containers are greedy vertically
--- (Widgets produced by hPad and vPad really *are* Fixed, though)
+-- Take the information we gathered while prerendering to render a final
+-- result.
 --
--- We're lying here to maintain prerender size calculations
--- as they're passed up to parent containers. As result, expect
--- padded containers to behave erratically if you nest two of
--- the same type.
-listPad :: Padded b => PadOpts -> [b] -> Widget
-listPad opts@PadOpts{..} xs = Widget Fixed Fixed $ do
-    -- Constrain our primary dimension to the greatest `Fixed` child's,
-    -- then delegate to padWith
-    prerendered <- traverse prerender xs
-
-    let maybePrimaries = sequence (prerendered ^.. folded . to psizeP)
-
-    let limit = case maybePrimaries of
-          Just primaries -> withReaderT (ctxPL .~ sum primaries)
-          Nothing        -> id
-
-    limit (padWith opts xs)
-
--- Padding options.
--- The "primary" dimension is the one in which padding is being inserted.
--- Fields ending in "P" are for the primary dimension; "S" otherwise.
-data PadOpts = PadOpts { -- PSize getters for each dimension
-                         psizeP       :: PSize -> Maybe Int
-                       , psizeS       :: PSize -> Maybe Int
-                         -- Context `remaining size` getter
-                       , ctxPL        :: Lens' Context Int
-                         -- Image size getter
-                       , imgSizeP     :: Image -> Int
-                         -- Center an image on the primary dimension
-                       , centerImageP :: Int   -> Result -> Result
-                         -- Join two images on the primary dimension
-                       , imgJoinP     :: Image -> Image  -> Image
-                         -- Padding function for the primary dimension
-                       , padP         :: Int   -> Image  -> Image
-                         -- padTo with a corrected argument order
-                         -- (ordinarily `width -> height -> ...`)
-                       , padToS       :: forall b. Padded b => Int -> Int -> b -> RenderM Result
-                         -- Create a point on the secondary
-                         -- axis' origin, with the specified primary
-                         -- coordinate
-                       , mkOnOriginS  :: Int   -> Location
-                       }
-
--- Pad a container with the given options.
--- The options are used to parameterize on the dimension we're padding.
+-- -- Widgets
+-- Take our render result from earlier (or render again if it's greedy
+-- on either axis) and pad it (centered) to the desired size.
 --
--- To describe in concrete terms, this is what happens when we
--- pad on the vertical axis:
+-- -- Containers
+-- 1. Constrain further renders to the smallest child size on the
+-- secondary axis. (e.g., the Horiz axis for Vert Layouts)
 --
--- 1. Determine the fixed size of our secondary dimension (width).
--- - This is equivalent to the largest `Fixed`-width child.
--- 2. Determine if all children are `Fixed` on our primary dimension.
--- - If so, insert padding for our children (see below).
--- - Otherwise, split remaining height between Greedy components.
+-- 2. Determine if all children are `Fixed` on the primary axis
+-- - If so, insert whitespace padding (see below)
+-- - Otherwise, split remaining space between Greedy components
 --
 -- 3. Insert padding
--- - If we only have one child, center the child component vertically.
--- - If we have several children, repace each cons with equal padding.
-padWith :: Padded b => PadOpts -> [b] -> RenderM Result
-padWith PadOpts{..} xs = do
-    prerendered <- traverse prerender xs
+-- - If we only have one child, center the child component
+-- - If we have several children, replace each cons with equal padding
+reify :: Prerendered Widget -> RenderM Result
+reify (RLeaf _ _ leaf) = do
+    result <- either render return leaf
+    width  <- asks availWidth
+    height <- asks availHeight
+    return (centerImageV height (centerImageH width result))
+reify (RPadded axis size rest) = do
+    let opts@PadOpts{..} = axisOpts axis
+        secondary        = fromJust (minSizeS size) -- ew
+        maybePrimaries   = sequence (rest ^.. folded . to preMinSize . to minSizeP)
 
-    let secondary = maximum (prerendered ^.. folded . to psizeS . _Just)
-
-    case sequence (prerendered ^.. folded . to psizeP) of
-        Just primaries -> insertPadding =<< zipWithM (padToS secondary) primaries xs
-        Nothing        -> expandGreedy secondary (zip (map psizeP prerendered) xs)
+    case maybePrimaries of
+        -- All children are Fixed on the primary axis
+        Just primaries  ->
+            insertPadding opts =<< zipWithM (\primary cmp ->
+                                      limit ctxSL secondary
+                                    . limit ctxPL primary
+                                    . reify $ cmp) primaries rest
+        -- Some or all of the children are Greedy on the primary axis
+        Nothing -> limit ctxSL secondary (expandGreedy opts rest)
 
     where
 
-    insertPadding :: [Result] -> RenderM Result
-    insertPadding [result] = do
+    limit :: Lens' Context Int -> Int -> ReaderT Context m a -> ReaderT Context m a
+    limit l x = withReaderT (l .~ x)
+
+    expandGreedy :: PadOpts -> [Prerendered Widget] -> RenderM Result
+    expandGreedy opts@PadOpts{..} widgets = do
+        availP <- asks (^. ctxPL)
+
+        let sizes      = widgets ^.. folded . to preMinSize . to minSizeP
+            usedP      = sum    (sizes ^.. folded . _Just)
+            greedCount = length (sizes ^.. folded . _Nothing)
+
+            pads       = buildPadding (availP - usedP) greedCount
+
+            growGreedy :: [Prerendered Widget] -> RenderM [Result]
+            growGreedy cmps = reverse . fst <$> foldM go ([], pads) cmps
+                where
+                go (rs,ps) prerendered = case minSizeP (preMinSize prerendered) of
+                    Just prim -> do
+                        rendered <- limit ctxPL prim (reify prerendered)
+                        return (rendered : rs, ps)
+                    Nothing   -> do
+                        let (p':ps') = ps
+                        rendered <- limit ctxPL p' (reify prerendered)
+                        return (rendered : rs, ps')
+
+        joinResults opts <$> growGreedy widgets
+
+    insertPadding :: PadOpts -> [Result] -> RenderM Result
+    insertPadding PadOpts{..} [result] = do
         avail <- asks (^. ctxPL)
         return (centerImageP avail result)
 
-    insertPadding results = do
+    insertPadding opts@PadOpts{..} results = do
         availP <- asks (^. ctxPL)
 
         let totalP = sum (results ^.. folded . to image . to imgSizeP)
@@ -234,43 +228,18 @@ padWith PadOpts{..} xs = do
             paddedResults :: [Result]
             paddedResults = zipWith (\pad' res' -> res' & imageL %~ padP pad')
                                     pads results
-                                 ++ [last results]
-        return (joinResults paddedResults)
-
-    expandGreedy :: Padded b
-                 => Int -- secondary size for padTo
-                 -> [(Maybe Int,b)] -- maybe primary, item
-                 -> RenderM Result
-    expandGreedy secondary sizes = do
-        availP <- asks (^. ctxPL)
-
-        let totalP     = sum (sizes ^.. folded . _1 . _Just)
-            greedCount = length (sizes ^.. folded . _1 . _Nothing)
-            pads       = buildPadding (availP - totalP) greedCount
-
-            growGreedy :: Padded b => [(Maybe Int, b)] -> RenderM [Result]
-            growGreedy cmps = reverse . fst <$> foldlM go ([], pads) cmps
-                where
-                go (rs,ps) (maybePrimary, b) = case maybePrimary of
-                    Just prim -> do
-                        rendered <- padToS secondary prim b
-                        return (rendered : rs, ps)
-                    Nothing   -> do
-                        let (p':ps') = ps
-                        rendered <- padToS secondary p' b
-                        return (rendered : rs, ps')
-
-        joinResults <$> growGreedy sizes
+                                ++ [last results]
+        return (joinResults opts paddedResults)
 
     buildPadding :: Int -> Int -> [Int]
     buildPadding 0     0    = []
-    buildPadding total size = amount : buildPadding remaining (size - 1)
+    buildPadding total count = amount : buildPadding remaining (count - 1)
         where
-        amount    = total `div` size
+        amount    = total `div` count
         remaining = total - amount
 
-    joinResults :: [Result] -> Result
-    joinResults = foldl go (Result emptyImage [] [])
+    joinResults :: PadOpts -> [Result] -> Result
+    joinResults PadOpts{..} = foldl go (Result emptyImage [] [])
         where
         go :: Result -> Result -> Result
         go acc res = acc & imageL   %~ (`imgJoinP` image res')
@@ -280,40 +249,100 @@ padWith PadOpts{..} xs = do
             res' :: Result
             res' = addResultOffset (mkOnOriginS (acc ^. imageL . to imgSizeP)) res
 
+-- Padding options.
+-- The "primary" dimension is the one in which padding is being inserted.
+-- Fields ending in "P" are for the primary dimension; "S" otherwise.
+
+axisOpts :: Axis -> PadOpts
+axisOpts Vert = vertPadOpts
+axisOpts Horiz = horizPadOpts
+
+vertPadOpts  :: PadOpts
+vertPadOpts  = PadOpts { minSizeP     = minHeight
+                       , minSizeS     = minWidth
+                       , ctxPL        = availHeightL
+                       , ctxSL        = availWidthL
+                       , imgSizeP     = imageHeight
+                       , centerImageP = centerImageV
+                       , imgJoinP     = vertJoin
+                       , padP         = pad 0 0 0
+                       , mkOnOriginS  = \p -> Location (0,p)
+                       , widthA       = maximum
+                       , heightA      = sum
+                       }
+
+horizPadOpts :: PadOpts
+horizPadOpts = PadOpts { minSizeP     = minWidth
+                       , minSizeS     = minHeight
+                       , ctxPL        = availWidthL
+                       , ctxSL        = availHeightL
+                       , imgSizeP     = imageWidth
+                       , centerImageP = centerImageH
+                       , imgJoinP     = horizJoin
+                       , padP         = \amount -> pad 0 0 amount 0
+                       , mkOnOriginS  = \p -> Location (p,0)
+                       , widthA       = sum
+                       , heightA      = maximum
+                       }
+
+data PadOpts = PadOpts { -- MinSize getters for each dimension
+                         minSizeP     :: MinSize -> Maybe Int
+                       , minSizeS     :: MinSize -> Maybe Int
+                         -- Context `remaining size` lens
+                       , ctxPL        :: Lens' Context Int
+                       , ctxSL        :: Lens' Context Int
+                         -- Image size getter
+                       , imgSizeP     :: Image -> Int
+                         -- Center an image on the primary dimension
+                       , centerImageP :: Int   -> Result -> Result
+                         -- Join two images on the primary dimension
+                       , imgJoinP     :: Image -> Image  -> Image
+                         -- Padding function for the primary dimension
+                       , padP         :: Int   -> Image  -> Image
+                         -- Create a point on the secondary
+                         -- axis' origin, with the specified primary
+                         -- coordinate
+                       , mkOnOriginS  :: Int   -> Location
+                         -- Height and width algebras for determining
+                         -- size when prerendering a container
+                       , widthA       :: [Int] -> Int
+                       , heightA      :: [Int] -> Int
+                       }
+
 
 ---- Justified text
 -- Insert padding as appropriate to horizontally-justify text in a
 -- vertically-padded container
 
-leftJustify :: [String] -> VPadded Widget
+leftJustify :: [String] -> Layout 'Vert Widget
 leftJustify = leftJustifyAttr . map ((,) mempty)
 
-leftJustifyAttr :: [(AttrName, String)] -> VPadded Widget
+leftJustifyAttr :: [(AttrName, String)] -> Layout 'Vert Widget
 leftJustifyAttr = justifyAttr (padRight Max)
 
-rightJustify :: [String] -> VPadded Widget
+rightJustify :: [String] -> Layout 'Vert Widget
 rightJustify = rightJustifyAttr . map ((,) mempty)
 
-rightJustifyAttr :: [(AttrName, String)] -> VPadded Widget
+rightJustifyAttr :: [(AttrName, String)] -> Layout 'Vert Widget
 rightJustifyAttr = justifyAttr (padLeft Max)
 
-justifyAttr :: (Widget -> Widget) -> [(AttrName, String)] -> VPadded Widget
+justifyAttr :: (Widget -> Widget) -> [(AttrName, String)] -> Layout 'Vert Widget
 justifyAttr padder xss =
     let maxLen = maximum (xss ^.. folded . _2 . to length)
-     in VPadded [padder' (withAttr attr (str xs))
-                        | (attr,xs) <- xss
-                        , let padder' = if length xs == maxLen
-                                            then id
-                                            else padder]
+     in col [padder' (withAttr attr (str xs))
+                    | (attr,xs) <- xss
+                    , let padder' = if length xs == maxLen
+                                        then id
+                                        else padder]
 
-fullJustify :: [String] -> VPadded Widget
-fullJustify = VPadded . map str
+fullJustify :: [String] -> Layout 'Vert Widget
+fullJustify = col . map str
 
-fullJustifyAttr :: [(AttrName, String)] -> VPadded Widget
-fullJustifyAttr = VPadded . map (uncurry withAttr . over _2 str)
+fullJustifyAttr :: [(AttrName, String)] -> Layout 'Vert Widget
+fullJustifyAttr = col . map (uncurry withAttr . over _2 str)
 
 
----- Helpful (Misc)
+---- Internally helpful (Misc)
 
 centerImageH :: Int -> Result -> Result
 centerImageH width res
