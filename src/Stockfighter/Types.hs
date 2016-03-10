@@ -49,13 +49,11 @@ module Stockfighter.Types
   , venue
   ) where
 
-import Control.Applicative ((<|>), empty)
+import Control.Applicative (empty)
 import Control.Lens        (abbreviatedFields, makeLensesWith)
 import Data.Aeson          ((.:), (.:?), FromJSON(parseJSON), withObject, withText)
-import Data.Aeson.Types    (Parser)
 import Data.Bool           (bool)
-import Data.Time.LocalTime (LocalTime)
-import Data.Time.Format    (defaultTimeLocale, parseTimeM)
+import Data.Time.Clock     (UTCTime)
 
 
 ---- Orders
@@ -88,7 +86,7 @@ data UserOrder = UserOrder { uoVenue       :: String
                            , uoOrderType   :: OrderType
                            , uoOrderId     :: Int
                            , uoAccount     :: String
-                           , uoTs          :: LocalTime
+                           , uoTs          :: UTCTime
                            , uoFills       :: [Fill]
                            , uoTotalFilled :: Int
                            , uoOpen        :: Bool
@@ -97,7 +95,7 @@ data UserOrder = UserOrder { uoVenue       :: String
 ---- Quotes and fills
 data Fill  = Fill  { fPrice     :: Int
                    , fQty       :: Int
-                   , fTs        :: LocalTime
+                   , fTs        :: UTCTime
                    } deriving Show
 
 data Quote = Quote { qSymbol    :: String
@@ -110,8 +108,8 @@ data Quote = Quote { qSymbol    :: String
                    , qAskDepth  :: Int
                    , qLastPrice :: Int
                    , qLastSize  :: Int
-                   , qLastTrade :: LocalTime
-                   , qQuoteTime :: LocalTime
+                   , qLastTrade :: UTCTime
+                   , qQuoteTime :: UTCTime
                    } deriving Show
 
 data Execution = Execution { eAccount          :: String
@@ -122,7 +120,7 @@ data Execution = Execution { eAccount          :: String
                            , eIncomingId       :: Int
                            , ePrice            :: Int
                            , eFilled           :: Int
-                           , eFilledAt         :: LocalTime
+                           , eFilledAt         :: UTCTime
                            , eStandingComplete :: Bool
                            , eIncomingComplete :: Bool
                            } deriving Show
@@ -131,10 +129,6 @@ data Execution = Execution { eAccount          :: String
 
 data Stock = Stock { sName :: String, sSymbol :: String } deriving Show
 
-
-parseTime :: String -> Parser LocalTime
-parseTime s = parseTimeM True defaultTimeLocale "%FT%T%QZ"  s <|>
-              parseTimeM True defaultTimeLocale "%FT%T%Q%z" s
 
 ---- Lenses
 
@@ -180,54 +174,54 @@ instance FromJSON OrderBook where
 
 instance FromJSON UserOrder where
     parseJSON = withObject "UserOrder" $ \obj ->
-        UserOrder <$>                obj .: "venue"
-                  <*>                obj .: "symbol"
-                  <*>                obj .: "direction"
-                  <*>                obj .: "originalQty"
-                  <*>                obj .: "qty"
-                  <*>                obj .: "price"
-                  <*>                obj .: "orderType"
-                  <*>                obj .: "id"
-                  <*>                obj .: "account"
-                  <*> (parseTime =<< obj .: "ts")
-                  <*>                obj .: "fills"
-                  <*>                obj .: "totalFilled"
-                  <*>                obj .: "open"
+        UserOrder <$> obj .: "venue"
+                  <*> obj .: "symbol"
+                  <*> obj .: "direction"
+                  <*> obj .: "originalQty"
+                  <*> obj .: "qty"
+                  <*> obj .: "price"
+                  <*> obj .: "orderType"
+                  <*> obj .: "id"
+                  <*> obj .: "account"
+                  <*> obj .: "ts"
+                  <*> obj .: "fills"
+                  <*> obj .: "totalFilled"
+                  <*> obj .: "open"
 
 instance FromJSON Fill where
     parseJSON = withObject "Fill" $ \obj ->
-        Fill <$>                obj .: "price"
-             <*>                obj .: "qty"
-             <*> (parseTime =<< obj .: "ts")
+        Fill <$> obj .: "price"
+             <*> obj .: "qty"
+             <*> obj .: "ts"
 
 instance FromJSON Quote where
     parseJSON = withObject "Quote" $ \obj ->
-        Quote <$>                obj .:  "symbol"
-              <*>                obj .:  "venue"
-              <*>                obj .:? "bid"
-              <*>                obj .:? "ask"
-              <*>                obj .:  "bidSize"
-              <*>                obj .:  "askSize"
-              <*>                obj .:  "bidDepth"
-              <*>                obj .:  "askDepth"
-              <*>                obj .:  "last"
-              <*>                obj .:  "lastSize"
-              <*> (parseTime =<< obj .:  "lastTrade")
-              <*> (parseTime =<< obj .:  "quoteTime")
+        Quote <$> obj .:  "symbol"
+              <*> obj .:  "venue"
+              <*> obj .:? "bid"
+              <*> obj .:? "ask"
+              <*> obj .:  "bidSize"
+              <*> obj .:  "askSize"
+              <*> obj .:  "bidDepth"
+              <*> obj .:  "askDepth"
+              <*> obj .:  "last"
+              <*> obj .:  "lastSize"
+              <*> obj .:  "lastTrade"
+              <*> obj .:  "quoteTime"
 
 instance FromJSON Execution where
     parseJSON = withObject "Execution" $ \obj ->
-        Execution <$>                obj .: "account"
-                  <*>                obj .: "venue"
-                  <*>                obj .: "symbol"
-                  <*>                obj .: "order"
-                  <*>                obj .: "standingId"
-                  <*>                obj .: "incomingId"
-                  <*>                obj .: "price"
-                  <*>                obj .: "filled"
-                  <*> (parseTime =<< obj .: "filledAt")
-                  <*>                obj .: "standingComplete"
-                  <*>                obj .: "incomingComplete"
+        Execution <$> obj .: "account"
+                  <*> obj .: "venue"
+                  <*> obj .: "symbol"
+                  <*> obj .: "order"
+                  <*> obj .: "standingId"
+                  <*> obj .: "incomingId"
+                  <*> obj .: "price"
+                  <*> obj .: "filled"
+                  <*> obj .: "filledAt"
+                  <*> obj .: "standingComplete"
+                  <*> obj .: "incomingComplete"
 
 instance FromJSON Stock where
     parseJSON = withObject "Stock" $ \obj ->
