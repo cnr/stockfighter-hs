@@ -40,19 +40,19 @@ import Graphics.Vty.Image
 -- Layouts can be padded on one of two axes
 data Axis = Horiz | Vert
 
--- OtherAxis is used to ensure that we don't nest two layouts sharing
--- a primary axis.
-type family OtherAxis (a :: Axis) :: Axis where
-    OtherAxis 'Horiz = 'Vert
-    OtherAxis 'Vert  = 'Horiz
+-- Perpendicular is used to ensure that we don't nest two layouts
+-- sharing a primary axis.
+type family Perpendicular (a :: Axis) :: Axis where
+    Perpendicular 'Horiz = 'Vert
+    Perpendicular 'Vert  = 'Horiz
 
-otherAxis :: Axis -> Axis
-otherAxis Horiz = Vert
-otherAxis Vert  = Horiz
+perpendicular :: Axis -> Axis
+perpendicular Horiz = Vert
+perpendicular Vert  = Horiz
 
 data Layout (axis :: Axis) a
       = Leaf a
-      | Padded [Layout (OtherAxis axis) a]
+      | Padded [Layout (Perpendicular axis) a]
 
 
 -- Combinators
@@ -112,7 +112,7 @@ prerender' axis (Leaf widget) = do
     return $ RLeaf axis (MinSize width height) result
 
 prerender' axis (Padded xs) = do
-    prerendered <- traverse (prerender' (otherAxis axis)) xs
+    prerendered <- traverse (prerender' (perpendicular axis)) xs
     let PadOpts{..} = axisOpts axis
         sizes       = prerendered ^.. folded . to preMinSize
         width       = widthA  (sizes ^.. folded . to minWidth  . _Just)
