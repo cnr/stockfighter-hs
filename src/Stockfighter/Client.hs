@@ -2,7 +2,7 @@
 
 module Stockfighter.Client
   ( APIError(..)
-  , SfOpts(..)
+  , SfLevel(..)
   , StockfighterT
   , runStockfighter
 
@@ -44,94 +44,91 @@ import Stockfighter.Types
 heartbeat :: MonadIO m => StockfighterT m Bool
 heartbeat = respOk <$> get "heartbeat"
 
-venueHeartbeat :: MonadIO m => StockfighterT m Bool
-venueHeartbeat = respOk <$> getVenue "heartbeat"
+venueHeartbeat :: MonadIO m => Venue -> StockfighterT m Bool
+venueHeartbeat venue = respOk <$> getVenue venue "heartbeat"
 
-stocks :: MonadIO m => StockfighterT m [Stock]
-stocks = getVenueWith "stocks" (^? key "symbols")
+stocks :: MonadIO m => Venue -> StockfighterT m [Stock]
+stocks venue = getVenueWith venue "stocks" (^? key "symbols")
 
-orderbook :: MonadIO m => String -> StockfighterT m OrderBook
-orderbook stock = getVenue ("stocks/" ++ stock)
+orderbook :: MonadIO m => Venue -> Symbol -> StockfighterT m OrderBook
+orderbook venue (Symbol sym) = getVenue venue ("stocks/" ++ sym)
 
-quote :: MonadIO m => String -> StockfighterT m Quote
-quote stock = getVenue ("stocks/" ++ stock ++ "/quote")
+quote :: MonadIO m => Venue -> Symbol -> StockfighterT m Quote
+quote venue (Symbol sym) = getVenue venue ("stocks/" ++ sym ++ "/quote")
 
-orderStatus :: MonadIO m => String -> Int -> StockfighterT m UserOrder
-orderStatus stock orderId = getVenue ("stocks/" ++ stock ++ "/orders/" ++ show orderId)
+orderStatus :: MonadIO m => Venue -> Symbol -> Int -> StockfighterT m UserOrder
+orderStatus venue (Symbol symbol) orderId = getVenue venue ("stocks/" ++ symbol ++ "/orders/" ++ show orderId)
 
-allOrders :: MonadIO m => StockfighterT m [UserOrder]
-allOrders = do
-    _account <- asks optAccount
-    getVenue ("accounts/" ++ _account ++ "/orders")
+allOrders :: MonadIO m => Venue -> StockfighterT m [UserOrder]
+allOrders venue = do
+    account <- asks levelAccount
+    getVenue venue ("accounts/" ++ account ++ "/orders")
 
-ordersForStock :: MonadIO m => String -> StockfighterT m [UserOrder]
-ordersForStock stock = do
-    _account <- asks optAccount
-    getVenueWith ("accounts/" ++ _account ++ "/stocks/" ++ stock ++ "/orders") (^? key "orders")
+ordersForStock :: MonadIO m => Venue -> Symbol -> StockfighterT m [UserOrder]
+ordersForStock venue (Symbol symbol) = do
+    account <- asks levelAccount
+    getVenueWith venue ("accounts/" ++ account ++ "/stocks/" ++ symbol ++ "/orders") (^? key "orders")
 
 
 ---- POST
 
 placeOrder :: MonadIO m
-           => String -- Stock symbol
+           => Venue
+           -> Symbol
            -> Int    -- Price
            -> Int    -- Quantity
            -> Direction
            -> OrderType
            -> StockfighterT m UserOrder
-placeOrder stock _price quantity _direction _orderType = do
-    _account <- asks optAccount
-    _venue   <- asks optVenue
-    postVenue ("stocks/" ++ stock ++ "/orders")
-              (object [ "account"   .= _account
-                      , "venue"     .= _venue
-                      , "stock"     .= stock
-                      , "price"     .= _price
-                      , "qty"       .= quantity
-                      , "direction" .=
-                            case _direction of
-                                Ask -> "sell" :: String
-                                Bid -> "buy"
-                      , "orderType" .=
-                            case _orderType of
-                                Limit -> "limit" :: String
-                                Market -> "market"
-                                FillOrKill -> "fill-or-kill"
-                                ImmediateOrCancel -> "immediate-or-cancel"
-                      ])
+placeOrder venue symbol _price quantity _direction _orderType = do
+    account <- asks levelAccount
+    postVenue venue ("stocks/" ++ unSymbol symbol ++ "/orders")
+                    (object [ "account"   .= account
+                            , "venue"     .= unVenue venue
+                            , "stock"     .= unSymbol symbol
+                            , "price"     .= _price
+                            , "qty"       .= quantity
+                            , "direction" .=
+                                  case _direction of
+                                      Ask -> "sell" :: String
+                                      Bid -> "buy"
+                            , "orderType" .=
+                                  case _orderType of
+                                      Limit -> "limit" :: String
+                                      Market -> "market"
+                                      FillOrKill -> "fill-or-kill"
+                                      ImmediateOrCancel -> "immediate-or-cancel"
+                            ])
 
 
 ---- DELETE
 
 cancelOrder :: MonadIO m
-            => String -- Stock symbol
+            => Venue
+            -> Symbol
             -> Int    -- Order ID
             -> StockfighterT m UserOrder
-cancelOrder stock orderId = deleteVenue ("stocks/" ++ stock ++ "/orders/" ++ show orderId)
+cancelOrder venue symbol orderId = deleteVenue venue ("stocks/" ++ unSymbol symbol ++ "/orders/" ++ show orderId)
 
 
 ---- Websockets
 
-tickerTape :: MonadIO m => StockfighterT m (ThreadId, TMChan Quote)
-tickerTape = do
-    _account <- asks optAccount
-    _venue   <- asks optVenue
-    tapeWith (_account ++ "/venues/" ++ _venue ++ "/tickertape") (^? key "quote")
+tickerTape :: MonadIO m => Venue -> StockfighterT m (ThreadId, TMChan Quote)
+tickerTape venue = do
+    account <- asks levelAccount
+    tapeWith (account ++ "/venues/" ++ unVenue venue ++ "/tickertape") (^? key "quote")
 
-tickerTapeStock :: MonadIO m => String -> StockfighterT m (ThreadId, TMChan Quote)
-tickerTapeStock stock = do
-    _account <- asks optAccount
-    _venue   <- asks optVenue
-    tapeWith (_account ++ "/venues/" ++ _venue ++ "/tickertape/stocks/" ++ stock) (^? key "quote")
+tickerTapeStock :: MonadIO m => Venue -> Symbol -> StockfighterT m (ThreadId, TMChan Quote)
+tickerTapeStock venue symbol = do
+    account <- asks levelAccount
+    tapeWith (account ++ "/venues/" ++ unVenue venue ++ "/tickertape/stocks/" ++ unSymbol symbol) (^? key "quote")
 
-executions :: MonadIO m => StockfighterT m (ThreadId, TMChan Execution)
-executions = do
-    _account <- asks optAccount
-    _venue   <- asks optVenue
-    tape (_account ++ "/venues/" ++ _venue ++ "/executions")
+executions :: MonadIO m => Venue -> StockfighterT m (ThreadId, TMChan Execution)
+executions venue = do
+    account <- asks levelAccount
+    tape (account ++ "/venues/" ++ unVenue venue ++ "/executions")
 
-executionsStock :: MonadIO m => String -> StockfighterT m (ThreadId, TMChan Execution)
-executionsStock stock = do
-    _account <- asks optAccount
-    _venue   <- asks optVenue
-    tape (_account ++ "/venues/" ++ _venue ++ "/executions/stocks/" ++ stock)
+executionsStock :: MonadIO m => Venue -> Symbol -> StockfighterT m (ThreadId, TMChan Execution)
+executionsStock venue symbol = do
+    account <- asks levelAccount
+    tape (account ++ "/venues/" ++ unVenue venue ++ "/executions/stocks/" ++ unSymbol symbol)

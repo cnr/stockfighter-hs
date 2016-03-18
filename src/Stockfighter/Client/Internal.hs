@@ -8,7 +8,7 @@ module Stockfighter.Client.Internal
   , StockfighterT
   , runStockfighter
   , APIError(..)
-  , SfOpts(..)
+  , SfLevel(..)
 
   , get
   , getVenue
@@ -36,11 +36,17 @@ import           Control.Monad.STM
 import           Data.Aeson
 import qualified Data.ByteString.Char8 as C8
 import qualified Data.ByteString.Lazy  as L
+import           Data.Map (Map)
+
 import           Network.WebSockets
 import qualified Network.Wreq       as W
 import qualified Network.Wreq.Types as W
+import           Stockfighter.Types
 import           Wuss
 
+
+gmBaseUrl :: String
+gmBaseUrl = "https://api.stockfighter.io/gm/"
 
 apiBaseUrl :: String
 apiBaseUrl = "https://api.stockfighter.io/ob/api/"
@@ -54,9 +60,9 @@ wsBasePath = "/ob/api/ws/"
 
 ---- StockfighterT
 
-type StockfighterT m = ReaderT SfOpts (ExceptT APIError m)
+type StockfighterT m = ReaderT SfLevel (ExceptT APIError m)
 
-runStockfighter :: SfOpts -> StockfighterT m a -> m (Either APIError a)
+runStockfighter :: SfLevel -> StockfighterT m a -> m (Either APIError a)
 runStockfighter opts action = runExceptT (runReaderT action opts)
 
 
@@ -64,10 +70,15 @@ data APIError = HTTPError Int (Maybe String)
               | ParseError String
                 deriving Show
 
-data SfOpts = SfOpts { optApiKey  :: String
-                     , optAccount :: String
-                     , optVenue   :: String
-                     }
+data SfLevel = SfLevel { levelApiKey          :: String
+                       , instanceId           :: Int
+                       , levelAccount         :: String
+                       , instructions         :: Map String String
+                       , tickers              :: [Symbol]
+                       , venues               :: [Venue]
+                       , secondsPerTradingDay :: Int
+                       , balances             :: Map String String
+                       }
 
 
 ---- Responses
@@ -86,20 +97,18 @@ instance FromJSON SfResp where
 
 sfopts :: Monad m => StockfighterT m W.Options
 sfopts = do
-    apiKey <- asks optApiKey
+    apiKey <- asks levelApiKey
     return (W.defaults & W.header "X-Starfighter-Authorization" .~ [C8.pack apiKey])
 
 -- Get and deserialize under the venue namespace
-getVenue :: (MonadIO m, FromJSON a) => String -> StockfighterT m a
-getVenue s = do
-    _venue <- asks optVenue
-    get ("venues/" ++ _venue ++ "/" ++ s)
+getVenue :: (MonadIO m, FromJSON a) => Venue -> String -> StockfighterT m a
+getVenue venue path = get ("venues/" ++ unVenue venue ++ "/" ++ path)
 
 -- Get under the venue namespace, deserializing a specific part of the returned JSON
-getVenueWith :: (MonadIO m, FromJSON a) => String -> (Value -> Maybe Value) -> StockfighterT m a
-getVenueWith s f = do
-    resp <- getVenue s :: MonadIO m => StockfighterT m Value
-    case fromJSON <$> f resp of
+getVenueWith :: (MonadIO m, FromJSON a) => Venue -> String -> (Value -> Maybe Value) -> StockfighterT m a
+getVenueWith venue path sel = do
+    resp <- getVenue venue path :: MonadIO m => StockfighterT m Value
+    case fromJSON <$> sel resp of
         Nothing          -> throwError (ParseError "Missing expected field")
         Just (Error e)   -> throwError (ParseError e)
         Just (Success a) -> return a
@@ -110,6 +119,14 @@ get s = do
     opts <- sfopts
     parseResponse =<< liftIO (W.getWith opts (apiBaseUrl ++ s))
 
+getWith :: (MonadIO m, FromJSON a) => String -> (Value -> Maybe Value) -> StockfighterT m a
+getWith path f = do
+    resp <- get path
+    case fromJSON <$> f resp of
+        Nothing          -> throwError (ParseError "Missing expected field")
+        Just (Error e)   -> throwError (ParseError e)
+        Just (Success a) -> return a
+
 
 ---- POST requests
 
@@ -118,11 +135,8 @@ post s a = do
     opts <- sfopts
     parseResponse =<< liftIO (W.postWith opts (apiBaseUrl ++ s) a)
 
-
-postVenue :: (MonadIO m, W.Postable a, FromJSON r) => String -> a -> StockfighterT m r
-postVenue s a = do
-    _venue <- asks optVenue
-    post ("venues/" ++ _venue ++ "/" ++ s) a
+postVenue :: (MonadIO m, W.Postable a, FromJSON r) => Venue -> String -> a -> StockfighterT m r
+postVenue venue path = post ("venues/" ++ unVenue venue ++ "/" ++ path)
 
 
 ---- DELETE requests
@@ -132,10 +146,8 @@ delete s = do
     opts <- sfopts
     parseResponse =<< liftIO (W.deleteWith opts (apiBaseUrl ++ s))
 
-deleteVenue :: (MonadIO m, FromJSON a) => String -> StockfighterT m a
-deleteVenue s = do
-    _venue <- asks optVenue
-    delete ("venues/" ++ _venue ++ "/" ++ s)
+deleteVenue :: (MonadIO m, FromJSON a) => Venue -> String -> StockfighterT m a
+deleteVenue venue path = delete ("venues/" ++ unVenue venue ++ "/" ++ path)
 
 
 ---- WebSockets

@@ -3,7 +3,10 @@
 {-# LANGUAGE TypeSynonymInstances   #-}
 
 module Stockfighter.Types
-  ( Direction(..)
+  ( Venue(..)
+  , Symbol(..)
+
+  , Direction(..)
   , OrderType(..)
 
   , Order(..)
@@ -38,14 +41,14 @@ data Order     = Order     { oDirection    :: Direction
                            , oQty          :: Int
                            } deriving Show
 
-data OrderBook = OrderBook { obVenue       :: String
-                           , obSymbol      :: String
+data OrderBook = OrderBook { obVenue       :: Venue
+                           , obSymbol      :: Symbol
                            , obBidList     :: [Order]
                            , obAskList     :: [Order]
                            } deriving Show
 
-data UserOrder = UserOrder { uoVenue       :: String
-                           , uoSymbol      :: String
+data UserOrder = UserOrder { uoVenue       :: Venue
+                           , uoSymbol      :: Symbol
                            , uoDirection   :: Direction
                            , uoOriginalQty :: Int
                            , uoQty         :: Int
@@ -65,7 +68,7 @@ data Fill  = Fill  { fPrice     :: Int
                    , fTs        :: UTCTime
                    } deriving Show
 
-data Quote = Quote { qSymbol    :: String
+data Quote = Quote { qSymbol    :: Symbol
                    , qVenue     :: String
                    , qBid       :: Maybe Int
                    , qAsk       :: Maybe Int
@@ -80,8 +83,8 @@ data Quote = Quote { qSymbol    :: String
                    } deriving Show
 
 data Execution = Execution { eAccount          :: String
-                           , eVenue            :: String
-                           , eSymbol           :: String
+                           , eVenue            :: Venue
+                           , eSymbol           :: Symbol
                            , eOrder            :: Order
                            , eStandingId       :: Int
                            , eIncomingId       :: Int
@@ -94,12 +97,24 @@ data Execution = Execution { eAccount          :: String
 
 ---- Misc
 
-data Stock = Stock { sName :: String, sSymbol :: String } deriving Show
+data    Stock  = Stock  { stockName :: String, stockSymbol :: Symbol } deriving Show
+newtype Venue  = Venue  { unVenue  :: String } deriving Show
+newtype Symbol = Symbol { unSymbol :: String } deriving Show
 
+instance IsString Venue where
+    fromString = Venue
 
+instance IsString Symbol where
+    fromString = Symbol
 
 
 ---- FromJSON
+
+instance FromJSON Venue where
+    parseJSON = withText "Venue" (pure . Venue . T.unpack)
+
+instance FromJSON Symbol where
+    parseJSON = withText "Symbol" (pure . Symbol . T.unpack)
 
 instance FromJSON Direction where
     parseJSON = withText "Direction" $ \str ->
