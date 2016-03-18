@@ -6,9 +6,6 @@ module Stockfighter.Client
   , StockfighterT
   , runStockfighter
 
-  , Tape
-  , EndTape(..)
-
   -- GET
   , allOrders
   , heartbeat
@@ -32,13 +29,14 @@ module Stockfighter.Client
   , executionsStock
   ) where
 
-import           Control.Concurrent
-import           Control.Lens hiding ((.=))
-import           Control.Monad.Reader
-import           Data.Aeson
-import           Data.Aeson.Lens
-import           Stockfighter.Client.Internal
-import           Stockfighter.Types
+import Control.Concurrent
+import Control.Concurrent.STM.TMChan
+import Control.Lens hiding ((.=))
+import Control.Monad.Reader
+import Data.Aeson
+import Data.Aeson.Lens
+import Stockfighter.Client.Internal
+import Stockfighter.Types
 
 
 ---- GET
@@ -114,25 +112,25 @@ cancelOrder stock orderId = deleteVenue ("stocks/" ++ stock ++ "/orders/" ++ sho
 
 ---- Websockets
 
-tickerTape :: MonadIO m => StockfighterT m (ThreadId, Tape Quote)
+tickerTape :: MonadIO m => StockfighterT m (ThreadId, TMChan Quote)
 tickerTape = do
     _account <- asks optAccount
     _venue   <- asks optVenue
     tapeWith (_account ++ "/venues/" ++ _venue ++ "/tickertape") (^? key "quote")
 
-tickerTapeStock :: MonadIO m => String -> StockfighterT m (ThreadId, Tape Quote)
+tickerTapeStock :: MonadIO m => String -> StockfighterT m (ThreadId, TMChan Quote)
 tickerTapeStock stock = do
     _account <- asks optAccount
     _venue   <- asks optVenue
     tapeWith (_account ++ "/venues/" ++ _venue ++ "/tickertape/stocks/" ++ stock) (^? key "quote")
 
-executions :: MonadIO m => StockfighterT m (ThreadId, Tape Execution)
+executions :: MonadIO m => StockfighterT m (ThreadId, TMChan Execution)
 executions = do
     _account <- asks optAccount
     _venue   <- asks optVenue
     tape (_account ++ "/venues/" ++ _venue ++ "/executions")
 
-executionsStock :: MonadIO m => String -> StockfighterT m (ThreadId, Tape Execution)
+executionsStock :: MonadIO m => String -> StockfighterT m (ThreadId, TMChan Execution)
 executionsStock stock = do
     _account <- asks optAccount
     _venue   <- asks optVenue

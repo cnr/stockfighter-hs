@@ -20,8 +20,6 @@ module Stockfighter.Client.Internal
   , delete
   , deleteVenue
 
-  , Tape
-  , EndTape(..)
   , tape
   , tapeWith
 
@@ -29,10 +27,12 @@ module Stockfighter.Client.Internal
   ) where
 
 import           Control.Concurrent
+import           Control.Concurrent.STM.TMChan
 import           Control.Exception
 import           Control.Lens
-import           Control.Monad.Reader
 import           Control.Monad.Except
+import           Control.Monad.Reader
+import           Control.Monad.STM
 import           Data.Aeson
 import qualified Data.ByteString.Char8 as C8
 import qualified Data.ByteString.Lazy  as L
@@ -140,47 +140,29 @@ deleteVenue s = do
 
 ---- WebSockets
 
-type Tape a = Chan (Either EndTape a)
-
-data EndTape = MessageNotJSON
-             | MissingValue
-             | FailedDecode String
-             | SocketClosed
-             | Killed
-             | IOE IOException
-               deriving Show
-
-
-tape :: (MonadIO m, FromJSON a) => String -> m (ThreadId, Tape a)
+tape :: (MonadIO m, FromJSON a) => String -> m (ThreadId, TMChan a)
 tape s = tapeWith s Just
 
-tapeWith :: (MonadIO m, FromJSON a) => String -> (Value -> Maybe Value) -> m (ThreadId, Tape a)
-tapeWith path f = liftIO $ runSecureClient wsBaseUrl 443 (wsBasePath ++ path) parseMessages -- TODO: handle connect exceptions, close connection properly
-
+tapeWith :: (MonadIO m, FromJSON a) => String -> (Value -> Maybe Value) -> m (ThreadId, TMChan a)
+tapeWith path f = liftIO $ runSecureClient wsBaseUrl 443 (wsBasePath ++ path) parseMessages
     where
-    parseMessages :: FromJSON a => Connection -> IO (ThreadId, Tape a)
+    parseMessages :: FromJSON a => Connection -> IO (ThreadId, TMChan a)
     parseMessages conn = liftIO $ do
-        chan <- newChan
+        chan <- atomically newTMChan
 
-        let loop = (do
+        let loop = do
               dataMessage <- receiveDataMessage conn
               let message = case dataMessage of
-                                Binary m -> m
+                                Binary m -> m -- just in case?
                                 Text   m -> m
-                  decoded = eitherDecode' message :: Either String Value
+                  decoded = f =<< decode' message
 
-              case decoded of
-                  Left  _ -> writeChan chan (Left MessageNotJSON)
-                  Right a -> case fromJSON <$> f a of
-                      Nothing            -> writeChan chan (Left MissingValue)
-                      Just (Error e)     -> writeChan chan (Left (FailedDecode e))
-                      Just (Success val) -> writeChan chan (Right val) >> loop)
-                `catch` \ThreadKilled        -> writeChan chan (Left Killed)
-                `catch` \ConnectionClosed    -> writeChan chan (Left SocketClosed)
-                `catch` \(ParseException s)  -> writeChan chan (Left (FailedDecode s))
-                `catch` \(ex :: IOException) -> writeChan chan (Left (IOE ex))
+              case fromJSON <$> decoded of
+                  -- TODO: signal TMChan close reason?
+                  Just (Success val) -> atomically (writeTMChan chan val) >> loop
+                  _                  -> return ()
 
-        tid <- forkIO loop
+        tid <- forkIO (loop `finally` atomically (closeTMChan chan))
         return (tid, chan)
 
 
