@@ -1,8 +1,5 @@
 {-# LANGUAGE FlexibleInstances      #-}
-{-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE MultiParamTypeClasses  #-}
 {-# LANGUAGE OverloadedStrings      #-}
-{-# LANGUAGE TemplateHaskell        #-}
 {-# LANGUAGE TypeSynonymInstances   #-}
 
 module Stockfighter.Types
@@ -16,44 +13,14 @@ module Stockfighter.Types
   , Quote(..)
   , Execution(..)
   , Stock(..)
-
-  -- Lenses
-  , account
-  , askDepth
-  , askList
-  , askSize
-  , bidDepth
-  , bidList
-  , bidSize
-  , direction
-  , filled
-  , filledAt
-  , fills
-  , incomingComplete
-  , incomingId
-  , lastPrice
-  , lastSize
-  , lastTrade
-  , open
-  , order
-  , orderType
-  , originalQty
-  , price
-  , qty
-  , quoteTime
-  , standingComplete
-  , standingId
-  , symbol
-  , totalFilled
-  , ts
-  , venue
   ) where
 
-import Control.Applicative (empty)
-import Control.Lens        (abbreviatedFields, makeLensesWith)
-import Data.Aeson          ((.:), (.:?), FromJSON(parseJSON), withObject, withText)
-import Data.Bool           (bool)
-import Data.Time.Clock     (UTCTime)
+import           Control.Applicative (empty)
+import           Data.Aeson          ((.:), (.:?), FromJSON(parseJSON), withObject, withText)
+import           Data.Bool           (bool)
+import           Data.String
+import qualified Data.Text as T
+import           Data.Time.Clock     (UTCTime)
 
 
 ---- Orders
@@ -130,16 +97,7 @@ data Execution = Execution { eAccount          :: String
 data Stock = Stock { sName :: String, sSymbol :: String } deriving Show
 
 
----- Lenses
 
-$(makeLensesWith abbreviatedFields ''Fill)
-$(makeLensesWith abbreviatedFields ''Order)
-$(makeLensesWith abbreviatedFields ''OrderBook)
-$(makeLensesWith abbreviatedFields ''OrderType)
-$(makeLensesWith abbreviatedFields ''Quote)
-$(makeLensesWith abbreviatedFields ''Execution)
-$(makeLensesWith abbreviatedFields ''Stock)
-$(makeLensesWith abbreviatedFields ''UserOrder)
 
 ---- FromJSON
 
