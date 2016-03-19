@@ -1,24 +1,24 @@
+{-# LANGUAGE ConstraintKinds     #-}
+{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module Stockfighter.Client.Internal
-  ( module Control.Monad.Except
-  , module Control.Monad.Reader
+  ( module Control.Monad.Reader
 
-  , StockfighterT
-  , runStockfighter
-  , APIError(..)
-  , SfLevel(..)
+  , MonadAPI
+  , APIException(..)
+  , InstanceId(..)
+  , Account(..)
 
-  , get
-  , getVenue
-  , getVenueWith
+  , getGM
+  , getGMWith
+  , getAPI
+  , getAPIWith
 
-  , post
-  , postVenue
+  , postGM
+  , postAPI
 
-  , delete
-  , deleteVenue
+  , deleteAPI
 
   , tape
   , tapeWith
@@ -28,16 +28,14 @@ module Stockfighter.Client.Internal
 
 import           Control.Concurrent
 import           Control.Concurrent.STM.TMChan
-import           Control.Exception
 import           Control.Lens
-import           Control.Monad.Except
+import           Control.Monad.Catch
 import           Control.Monad.Reader
 import           Control.Monad.STM
 import           Data.Aeson
 import qualified Data.ByteString.Char8 as C8
 import qualified Data.ByteString.Lazy  as L
-import           Data.Map (Map)
-
+import           Data.List
 import           Network.WebSockets
 import qualified Network.Wreq       as W
 import qualified Network.Wreq.Types as W
@@ -58,27 +56,15 @@ wsBasePath :: String
 wsBasePath = "/ob/api/ws/"
 
 
----- StockfighterT
+---- MonadAPI
 
-type StockfighterT m = ReaderT SfLevel (ExceptT APIError m)
+type MonadAPI m = (MonadIO m, MonadThrow m, MonadReader ApiKey m)
 
-runStockfighter :: SfLevel -> StockfighterT m a -> m (Either APIError a)
-runStockfighter opts action = runExceptT (runReaderT action opts)
+data APIException = NotOK Int (Maybe String)
+                  | ParseError String
+                    deriving Show
 
-
-data APIError = HTTPError Int (Maybe String)
-              | ParseError String
-                deriving Show
-
-data SfLevel = SfLevel { levelApiKey          :: String
-                       , instanceId           :: Int
-                       , levelAccount         :: String
-                       , instructions         :: Map String String
-                       , tickers              :: [Symbol]
-                       , venues               :: [Venue]
-                       , secondsPerTradingDay :: Int
-                       , balances             :: Map String String
-                       }
+instance Exception APIException
 
 
 ---- Responses
@@ -93,70 +79,65 @@ instance FromJSON SfResp where
                <*> obj .:? "error"
 
 
+---- Wreq options
+
+mkOpts :: String -> W.Options
+mkOpts apiKey = W.defaults & W.header "X-Starfighter-Authorization" .~ [C8.pack apiKey]
+
+
 ---- GET requests
 
-sfopts :: Monad m => StockfighterT m W.Options
-sfopts = do
-    apiKey <- asks levelApiKey
-    return (W.defaults & W.header "X-Starfighter-Authorization" .~ [C8.pack apiKey])
-
--- Get and deserialize under the venue namespace
-getVenue :: (MonadIO m, FromJSON a) => Venue -> String -> StockfighterT m a
-getVenue venue path = get ("venues/" ++ unVenue venue ++ "/" ++ path)
-
--- Get under the venue namespace, deserializing a specific part of the returned JSON
-getVenueWith :: (MonadIO m, FromJSON a) => Venue -> String -> (Value -> Maybe Value) -> StockfighterT m a
-getVenueWith venue path sel = do
-    resp <- getVenue venue path :: MonadIO m => StockfighterT m Value
+getBase :: (MonadAPI m, FromJSON a) => [String] -> (Value -> Maybe Value) -> m a
+getBase path sel = do
+    (ApiKey apiKey) <- ask
+    resp <- parseResponse =<< liftIO (W.getWith (mkOpts apiKey) (intercalate "/" path))
     case fromJSON <$> sel resp of
-        Nothing          -> throwError (ParseError "Missing expected field")
-        Just (Error e)   -> throwError (ParseError e)
+        Nothing          -> throwM (ParseError "Missing expected field")
+        Just (Error e)   -> throwM (ParseError e)
         Just (Success a) -> return a
 
--- Get and deserialize under the root namespace
-get :: (MonadIO m, FromJSON a) => String -> StockfighterT m a
-get s = do
-    opts <- sfopts
-    parseResponse =<< liftIO (W.getWith opts (apiBaseUrl ++ s))
+getGM :: (MonadAPI m, FromJSON a) => [String] -> m a
+getGM path = getGMWith path Just
 
-getWith :: (MonadIO m, FromJSON a) => String -> (Value -> Maybe Value) -> StockfighterT m a
-getWith path f = do
-    resp <- get path
-    case fromJSON <$> f resp of
-        Nothing          -> throwError (ParseError "Missing expected field")
-        Just (Error e)   -> throwError (ParseError e)
-        Just (Success a) -> return a
+getGMWith :: (MonadAPI m, FromJSON a) => [String] -> (Value -> Maybe Value) -> m a
+getGMWith path = getBase (gmBaseUrl : path)
+
+getAPI :: (MonadAPI m, FromJSON a) => [String] -> m a
+getAPI path = getAPIWith path Just
+
+getAPIWith :: (MonadAPI m, FromJSON a) => [String] -> (Value -> Maybe Value) -> m a
+getAPIWith path = getBase (apiBaseUrl : path)
 
 
 ---- POST requests
 
-post :: (MonadIO m, W.Postable a, FromJSON r) => String -> a -> StockfighterT m r
-post s a = do
-    opts <- sfopts
-    parseResponse =<< liftIO (W.postWith opts (apiBaseUrl ++ s) a)
+postBase :: (MonadAPI m, W.Postable p, FromJSON r) => [String] -> p -> m r
+postBase path p = do
+    (ApiKey apiKey) <- ask
+    parseResponse =<< liftIO (W.postWith (mkOpts apiKey) (intercalate "/" path) p)
 
-postVenue :: (MonadIO m, W.Postable a, FromJSON r) => Venue -> String -> a -> StockfighterT m r
-postVenue venue path = post ("venues/" ++ unVenue venue ++ "/" ++ path)
+postGM :: (MonadAPI m, W.Postable p, FromJSON r) => [String] -> p -> m r
+postGM path = postBase (gmBaseUrl : path)
+
+postAPI :: (MonadAPI m, W.Postable p, FromJSON r) => [String] -> p -> m r
+postAPI path = postBase (apiBaseUrl : path)
 
 
 ---- DELETE requests
 
-delete :: (MonadIO m, FromJSON a) => String -> StockfighterT m a
-delete s = do
-    opts <- sfopts
-    parseResponse =<< liftIO (W.deleteWith opts (apiBaseUrl ++ s))
-
-deleteVenue :: (MonadIO m, FromJSON a) => Venue -> String -> StockfighterT m a
-deleteVenue venue path = delete ("venues/" ++ unVenue venue ++ "/" ++ path)
+deleteAPI :: (MonadAPI m, FromJSON a) => [String] -> m a
+deleteAPI path = do
+    (ApiKey apiKey) <- ask
+    parseResponse =<< liftIO (W.deleteWith (mkOpts apiKey) (intercalate "/" (apiBaseUrl : path)))
 
 
 ---- WebSockets
 
-tape :: (MonadIO m, FromJSON a) => String -> m (ThreadId, TMChan a)
-tape s = tapeWith s Just
+tape :: (MonadIO m, FromJSON a) => [String] -> m (ThreadId, TMChan a)
+tape path = tapeWith path Just
 
-tapeWith :: (MonadIO m, FromJSON a) => String -> (Value -> Maybe Value) -> m (ThreadId, TMChan a)
-tapeWith path f = liftIO $ runSecureClient wsBaseUrl 443 (wsBasePath ++ path) parseMessages
+tapeWith :: (MonadIO m, FromJSON a) => [String] -> (Value -> Maybe Value) -> m (ThreadId, TMChan a)
+tapeWith path sel = liftIO $ runSecureClient wsBaseUrl 443 (intercalate "/" (wsBasePath : path)) parseMessages
     where
     parseMessages :: FromJSON a => Connection -> IO (ThreadId, TMChan a)
     parseMessages conn = liftIO $ do
@@ -167,7 +148,7 @@ tapeWith path f = liftIO $ runSecureClient wsBaseUrl 443 (wsBasePath ++ path) pa
               let message = case dataMessage of
                                 Binary m -> m -- just in case?
                                 Text   m -> m
-                  decoded = f =<< decode' message
+                  decoded = sel =<< decode' message
 
               case fromJSON <$> decoded of
                   -- TODO: signal TMChan close reason?
@@ -180,18 +161,18 @@ tapeWith path f = liftIO $ runSecureClient wsBaseUrl 443 (wsBasePath ++ path) pa
 
 ---- General
 
-parseResponse :: (MonadIO m, FromJSON a) => W.Response L.ByteString -> StockfighterT m a
+parseResponse :: (MonadAPI m, FromJSON a) => W.Response L.ByteString -> m a
 parseResponse response = do
     let maybeResp = eitherDecode' (response ^. W.responseBody) :: Either String SfResp
         code      = response ^. W.responseStatus . W.statusCode
 
     case maybeResp of
-        Left e     -> throwError (ParseError e)
+        Left e     -> throwM (ParseError e)
         Right resp -> unless (respOk resp) $
-                          throwError (HTTPError code (respError resp))
+                          throwM (NotOK code (respError resp))
 
     let maybeResult = eitherDecode' (response ^. W.responseBody)
 
     case maybeResult of
-        Left e -> throwError (ParseError e)
+        Left e -> throwM (ParseError e)
         Right a -> return a

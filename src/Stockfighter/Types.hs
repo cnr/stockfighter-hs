@@ -1,9 +1,14 @@
-{-# LANGUAGE FlexibleInstances      #-}
-{-# LANGUAGE OverloadedStrings      #-}
-{-# LANGUAGE TypeSynonymInstances   #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
 
 module Stockfighter.Types
-  ( Venue(..)
+  ( Account(..)
+  , ApiKey(..)
+  , InstanceId(..)
+  , SfLevel(..)
+  , SfInst(..)
+
+  , Venue(..)
   , Symbol(..)
 
   , Direction(..)
@@ -19,11 +24,47 @@ module Stockfighter.Types
   ) where
 
 import           Control.Applicative (empty)
-import           Data.Aeson          ((.:), (.:?), FromJSON(parseJSON), withObject, withText)
+import           Data.Aeson          ((.:), (.:?), FromJSON(parseJSON), Object, withObject, withScientific, withText)
 import           Data.Bool           (bool)
-import           Data.String
-import qualified Data.Text as T
+import           Data.Map            (Map)
+import           Data.String         (IsString)
+import qualified Data.Text           as T
 import           Data.Time.Clock     (UTCTime)
+
+
+---- Stockfighter Level/Instance types
+-- Too many types? Never!
+
+newtype Account    = Account    { unAccount    :: String
+                                } deriving (Eq, Ord, Show, IsString)
+
+newtype ApiKey     = ApiKey     { unApiKey     :: String
+                                } deriving (Eq, Ord, Show, IsString)
+
+newtype InstanceId = InstanceId { unInstanceId :: Int
+                                } deriving (Eq, Ord, Show)
+
+newtype Symbol     = Symbol     { unSymbol     :: String
+                                } deriving (Eq, Ord, Show, IsString)
+
+newtype Venue      = Venue      { unVenue      :: String
+                                } deriving (Eq, Ord, Show, IsString)
+
+
+data SfLevel = SfLevel { instanceId           :: InstanceId
+                       , levelAccount         :: Account
+                       , instructions         :: Map String String
+                       , tickers              :: [Symbol]
+                       , venues               :: [Venue]
+                       , secondsPerTradingDay :: Int
+                       , balances             :: Maybe (Map String Int)
+                       } deriving Show
+
+data SfInst = SfInst   { instDetails :: Object
+                       , instDone    :: Bool
+                       , instId      :: InstanceId
+                       , instState   :: String
+                       } deriving Show
 
 
 ---- Orders
@@ -55,7 +96,7 @@ data UserOrder = UserOrder { uoVenue       :: Venue
                            , uoPrice       :: Int
                            , uoOrderType   :: OrderType
                            , uoOrderId     :: Int
-                           , uoAccount     :: String
+                           , uoAccount     :: Account
                            , uoTs          :: UTCTime
                            , uoFills       :: [Fill]
                            , uoTotalFilled :: Int
@@ -69,7 +110,7 @@ data Fill  = Fill  { fPrice     :: Int
                    } deriving Show
 
 data Quote = Quote { qSymbol    :: Symbol
-                   , qVenue     :: String
+                   , qVenue     :: Venue
                    , qBid       :: Maybe Int
                    , qAsk       :: Maybe Int
                    , qBidSize   :: Int
@@ -82,7 +123,7 @@ data Quote = Quote { qSymbol    :: Symbol
                    , qQuoteTime :: UTCTime
                    } deriving Show
 
-data Execution = Execution { eAccount          :: String
+data Execution = Execution { eAccount          :: Account
                            , eVenue            :: Venue
                            , eSymbol           :: Symbol
                            , eOrder            :: Order
@@ -97,24 +138,44 @@ data Execution = Execution { eAccount          :: String
 
 ---- Misc
 
-data    Stock  = Stock  { stockName :: String, stockSymbol :: Symbol } deriving Show
-newtype Venue  = Venue  { unVenue  :: String } deriving Show
-newtype Symbol = Symbol { unSymbol :: String } deriving Show
-
-instance IsString Venue where
-    fromString = Venue
-
-instance IsString Symbol where
-    fromString = Symbol
+data Stock = Stock { stockName   :: String
+                   , stockSymbol :: Symbol
+                   } deriving Show
 
 
 ---- FromJSON
 
-instance FromJSON Venue where
-    parseJSON = withText "Venue" (pure . Venue . T.unpack)
+instance FromJSON Account where
+    parseJSON = withText "Account" (pure . Account . T.unpack)
+
+instance FromJSON ApiKey where
+    parseJSON = withText "ApiKey" (pure . ApiKey . T.unpack)
+
+instance FromJSON InstanceId where
+    parseJSON = withScientific "ApiKey" (pure . InstanceId . floor)
 
 instance FromJSON Symbol where
     parseJSON = withText "Symbol" (pure . Symbol . T.unpack)
+
+instance FromJSON Venue where
+    parseJSON = withText "Venue" (pure . Venue . T.unpack)
+
+instance FromJSON SfLevel where
+    parseJSON = withObject "SfLevel" $ \obj ->
+        SfLevel <$> obj .:  "instanceId"
+                <*> obj .:  "account"
+                <*> obj .:  "instructions"
+                <*> obj .:  "tickers"
+                <*> obj .:  "venues"
+                <*> obj .:  "secondsPerTradingDay"
+                <*> obj .:? "balances"
+
+instance FromJSON SfInst where
+    parseJSON = withObject "SfInst" $ \obj ->
+        SfInst <$> obj .: "details"
+               <*> obj .: "done"
+               <*> obj .: "id"
+               <*> obj .: "state"
 
 instance FromJSON Direction where
     parseJSON = withText "Direction" $ \str ->

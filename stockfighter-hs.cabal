@@ -22,6 +22,7 @@ library
                      , aeson
                      , bytestring
                      , containers
+                     , exceptions
                      , lens
                      , lens-aeson
                      , mtl
@@ -45,6 +46,7 @@ executable stockfighter-hs-exe
                      , stockfighter-hs
                      , brick
                      , data-default
+                     , exceptions
                      , lens
                      , mtl
                      , vty

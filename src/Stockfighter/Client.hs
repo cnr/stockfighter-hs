@@ -1,10 +1,20 @@
+{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Stockfighter.Client
-  ( APIError(..)
-  , SfLevel(..)
-  , StockfighterT
+  ( StockfighterT
   , runStockfighter
+  , APIException(..)
+  , SfLevel(..)
+  , SfInst(..)
+
+  -- GM calls
+  , startLevel
+  , stopLevel
+  , resumeLevel
+  , restartLevel
+  , instInfo
+  -- , listLevels -- TODO: not yet supported by stockfighter
 
   -- GET
   , allOrders
@@ -35,65 +45,96 @@ import Control.Lens hiding ((.=))
 import Control.Monad.Reader
 import Data.Aeson
 import Data.Aeson.Lens
+import Network.Wreq
 import Stockfighter.Client.Internal
 import Stockfighter.Types
 
 
+---- GM calls
+
+type StockfighterT = ReaderT ApiKey
+
+runStockfighter :: ApiKey -> StockfighterT m a -> m a
+runStockfighter = flip runReaderT
+
+
+emptyPost :: [FormParam]
+emptyPost = []
+
+startLevel :: MonadAPI m => String -> m SfLevel
+startLevel level = postGM ["levels", level] emptyPost
+
+stopLevel :: MonadAPI m => InstanceId -> m Bool
+stopLevel (InstanceId inst) = respOk <$> postGM ["instances", show inst, "stop"] emptyPost
+
+resumeLevel :: MonadAPI m => InstanceId -> m Bool
+resumeLevel (InstanceId inst) = respOk <$> postGM ["instances", show inst, "resume"] emptyPost
+
+restartLevel :: MonadAPI m => InstanceId -> m Bool
+restartLevel (InstanceId inst) = respOk <$> postGM ["instances", show inst, "restart"] emptyPost
+
+instInfo :: MonadAPI m => InstanceId -> m SfInst
+instInfo inst = getGM ["instances", show (unInstanceId inst)]
+
+
 ---- GET
 
-heartbeat :: MonadIO m => StockfighterT m Bool
-heartbeat = respOk <$> get "heartbeat"
+heartbeat :: MonadAPI m => m Bool
+heartbeat = respOk <$> getAPI ["heartbeat"]
 
-venueHeartbeat :: MonadIO m => Venue -> StockfighterT m Bool
-venueHeartbeat venue = respOk <$> getVenue venue "heartbeat"
+venueHeartbeat :: MonadAPI m => Venue -> m Bool
+venueHeartbeat (Venue venue) = respOk <$> getAPI ["venues", venue, "heartbeat"]
 
-stocks :: MonadIO m => Venue -> StockfighterT m [Stock]
-stocks venue = getVenueWith venue "stocks" (^? key "symbols")
+stocks :: MonadAPI m => Venue -> m [Stock]
+stocks (Venue venue) =
+    getAPIWith ["venues", venue, "stocks"] (^? key "symbols")
 
-orderbook :: MonadIO m => Venue -> Symbol -> StockfighterT m OrderBook
-orderbook venue (Symbol sym) = getVenue venue ("stocks/" ++ sym)
+orderbook :: MonadAPI m => Venue -> Symbol -> m OrderBook
+orderbook (Venue venue) (Symbol symbol) =
+    getAPI ["venues", venue, "stocks", symbol]
 
-quote :: MonadIO m => Venue -> Symbol -> StockfighterT m Quote
-quote venue (Symbol sym) = getVenue venue ("stocks/" ++ sym ++ "/quote")
+quote :: MonadAPI m => Venue -> Symbol -> m Quote
+quote (Venue venue) (Symbol symbol) =
+    getAPI ["venues", venue, "stocks", symbol, "quote"]
 
-orderStatus :: MonadIO m => Venue -> Symbol -> Int -> StockfighterT m UserOrder
-orderStatus venue (Symbol symbol) orderId = getVenue venue ("stocks/" ++ symbol ++ "/orders/" ++ show orderId)
+orderStatus :: MonadAPI m => Venue -> Symbol -> Int -> m UserOrder
+orderStatus (Venue venue) (Symbol symbol) orderId =
+    getAPI ["venues", venue, "stocks", symbol, "orders", show orderId]
 
-allOrders :: MonadIO m => Venue -> StockfighterT m [UserOrder]
-allOrders venue = do
-    account <- asks levelAccount
-    getVenue venue ("accounts/" ++ account ++ "/orders")
+allOrders :: MonadAPI m => Account -> Venue -> m [UserOrder]
+allOrders (Account account) (Venue venue) =
+    getAPI ["venues", venue, "accounts", account, "orders"]
 
-ordersForStock :: MonadIO m => Venue -> Symbol -> StockfighterT m [UserOrder]
-ordersForStock venue (Symbol symbol) = do
-    account <- asks levelAccount
-    getVenueWith venue ("accounts/" ++ account ++ "/stocks/" ++ symbol ++ "/orders") (^? key "orders")
+ordersForStock :: MonadAPI m => Account -> Venue -> Symbol -> m [UserOrder]
+ordersForStock (Account account) (Venue venue) (Symbol symbol) =
+    getAPIWith ["venues", venue, "accounts", account, "stocks", symbol, "orders"]
+               (^? key "orders")
 
 
 ---- POST
 
-placeOrder :: MonadIO m
-           => Venue
+placeOrder :: MonadAPI m
+           => Account
+           -> Venue
            -> Symbol
-           -> Int    -- Price
-           -> Int    -- Quantity
+           -> Int -- Price
+           -> Int -- Quantity
            -> Direction
            -> OrderType
-           -> StockfighterT m UserOrder
-placeOrder venue symbol _price quantity _direction _orderType = do
-    account <- asks levelAccount
-    postVenue venue ("stocks/" ++ unSymbol symbol ++ "/orders")
+           -> m UserOrder
+placeOrder (Account account) (Venue venue) (Symbol symbol) price quantity direction orderType =
+    postAPI ["venues", venue, "stocks", symbol, "orders"]
                     (object [ "account"   .= account
-                            , "venue"     .= unVenue venue
-                            , "stock"     .= unSymbol symbol
-                            , "price"     .= _price
+                            , "venue"     .= venue
+                            , "stock"     .= symbol
+                            , "price"     .= price
                             , "qty"       .= quantity
                             , "direction" .=
-                                  case _direction of
+                                  case direction of
                                       Ask -> "sell" :: String
                                       Bid -> "buy"
                             , "orderType" .=
-                                  case _orderType of
+                                  case orderType of
                                       Limit -> "limit" :: String
                                       Market -> "market"
                                       FillOrKill -> "fill-or-kill"
@@ -103,32 +144,31 @@ placeOrder venue symbol _price quantity _direction _orderType = do
 
 ---- DELETE
 
-cancelOrder :: MonadIO m
+cancelOrder :: MonadAPI m
             => Venue
             -> Symbol
             -> Int    -- Order ID
-            -> StockfighterT m UserOrder
-cancelOrder venue symbol orderId = deleteVenue venue ("stocks/" ++ unSymbol symbol ++ "/orders/" ++ show orderId)
+            -> m UserOrder
+cancelOrder (Venue venue) (Symbol symbol) orderId =
+    deleteAPI ["venues", venue, "stocks", symbol, "orders", show orderId]
 
 
 ---- Websockets
 
-tickerTape :: MonadIO m => Venue -> StockfighterT m (ThreadId, TMChan Quote)
-tickerTape venue = do
-    account <- asks levelAccount
-    tapeWith (account ++ "/venues/" ++ unVenue venue ++ "/tickertape") (^? key "quote")
+tickerTape :: MonadAPI m => Account -> Venue -> m (ThreadId, TMChan Quote)
+tickerTape (Account account) (Venue venue) =
+    tapeWith [account, "venues", venue, "tickertape"]
+             (^? key "quote")
 
-tickerTapeStock :: MonadIO m => Venue -> Symbol -> StockfighterT m (ThreadId, TMChan Quote)
-tickerTapeStock venue symbol = do
-    account <- asks levelAccount
-    tapeWith (account ++ "/venues/" ++ unVenue venue ++ "/tickertape/stocks/" ++ unSymbol symbol) (^? key "quote")
+tickerTapeStock :: MonadAPI m => Account -> Venue -> Symbol -> m (ThreadId, TMChan Quote)
+tickerTapeStock (Account account) (Venue venue) (Symbol symbol) =
+    tapeWith [account, "venues", venue, "tickertape", "stocks", symbol]
+             (^? key "quote")
 
-executions :: MonadIO m => Venue -> StockfighterT m (ThreadId, TMChan Execution)
-executions venue = do
-    account <- asks levelAccount
-    tape (account ++ "/venues/" ++ unVenue venue ++ "/executions")
+executions :: MonadAPI m => Account -> Venue -> m (ThreadId, TMChan Execution)
+executions (Account account) (Venue venue) =
+    tape [account, "venues", venue, "executions"]
 
-executionsStock :: MonadIO m => Venue -> Symbol -> StockfighterT m (ThreadId, TMChan Execution)
-executionsStock venue symbol = do
-    account <- asks levelAccount
-    tape (account ++ "/venues/" ++ unVenue venue ++ "/executions/stocks/" ++ unSymbol symbol)
+executionsStock :: MonadIO m => Account -> Venue -> Symbol -> m (ThreadId, TMChan Execution)
+executionsStock (Account account) (Venue venue) (Symbol symbol) =
+    tape [account, "venues", venue, "executions", "stocks", symbol]
