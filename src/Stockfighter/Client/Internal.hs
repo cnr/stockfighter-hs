@@ -3,9 +3,7 @@
 {-# LANGUAGE OverloadedStrings   #-}
 
 module Stockfighter.Client.Internal
-  ( module Control.Monad.Reader
-
-  , MonadAPI
+  ( MonadAPI
   , APIException(..)
   , InstanceId(..)
   , Account(..)
