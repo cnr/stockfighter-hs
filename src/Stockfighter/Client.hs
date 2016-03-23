@@ -155,17 +155,17 @@ cancelOrder (Venue venue) (Symbol symbol) orderId =
 
 ---- Websockets
 
-tickerTape :: MonadAPI m => Account -> Venue -> m (ThreadId, TMChan Quote)
+tickerTape :: MonadIO m => Account -> Venue -> m (ThreadId, TMChan Quote)
 tickerTape (Account account) (Venue venue) =
     tapeWith [account, "venues", venue, "tickertape"]
              (^? key "quote")
 
-tickerTapeStock :: MonadAPI m => Account -> Venue -> Symbol -> m (ThreadId, TMChan Quote)
+tickerTapeStock :: MonadIO m => Account -> Venue -> Symbol -> m (ThreadId, TMChan Quote)
 tickerTapeStock (Account account) (Venue venue) (Symbol symbol) =
     tapeWith [account, "venues", venue, "tickertape", "stocks", symbol]
              (^? key "quote")
 
-executions :: MonadAPI m => Account -> Venue -> m (ThreadId, TMChan Execution)
+executions :: MonadIO m => Account -> Venue -> m (ThreadId, TMChan Execution)
 executions (Account account) (Venue venue) =
     tape [account, "venues", venue, "executions"]
 
