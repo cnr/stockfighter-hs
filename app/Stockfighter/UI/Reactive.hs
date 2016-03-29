@@ -46,8 +46,8 @@ data RenderView = RenderView { rWidgets :: [Widget]
                              , rAttrMap :: AttrMap
                              }
 
-reactiveMain :: ReactiveBuilder a -> IO a
-reactiveMain app = withVty $ \vty -> do
+reactiveMain :: MonadIO m => ReactiveBuilder a -> m a
+reactiveMain app = liftIO $ withVty $ \vty -> do
     (esVtyEvents, fireVtyEvent) <- newAddHandler
 
     exitVar <- newEmptyMVar

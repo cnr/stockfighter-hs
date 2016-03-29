@@ -25,11 +25,9 @@ module Stockfighter.Client.Internal
   ) where
 
 import           Control.Concurrent
-import           Control.Concurrent.STM.TMChan
 import           Control.Lens
 import           Control.Monad.Catch
 import           Control.Monad.Reader
-import           Control.Monad.STM
 import           Data.Aeson
 import qualified Data.ByteString.Char8 as C8
 import qualified Data.ByteString.Lazy  as L
@@ -42,16 +40,16 @@ import           Wuss
 
 
 gmBaseUrl :: String
-gmBaseUrl = "https://api.stockfighter.io/gm/"
+gmBaseUrl = "https://api.stockfighter.io/gm"
 
 apiBaseUrl :: String
-apiBaseUrl = "https://api.stockfighter.io/ob/api/"
+apiBaseUrl = "https://api.stockfighter.io/ob/api"
 
 wsBaseUrl :: String
 wsBaseUrl = "api.stockfighter.io"
 
 wsBasePath :: String
-wsBasePath = "/ob/api/ws/"
+wsBasePath = "/ob/api/ws"
 
 
 ---- MonadAPI
@@ -131,18 +129,17 @@ deleteAPI path = do
 
 ---- WebSockets
 
-tape :: (MonadIO m, FromJSON a) => [String] -> m (ThreadId, TMChan a)
+tape :: (MonadIO m, FromJSON a) => [String] -> (a -> IO ()) -> m ThreadId
 tape path = tapeWith path Just
 
-tapeWith :: (MonadIO m, FromJSON a) => [String] -> (Value -> Maybe Value) -> m (ThreadId, TMChan a)
-tapeWith path sel = liftIO $ runSecureClient wsBaseUrl 443 (intercalate "/" (wsBasePath : path)) parseMessages
+tapeWith :: (MonadIO m, FromJSON a) => [String] -> (Value -> Maybe Value) -> (a -> IO ()) -> m ThreadId
+tapeWith path sel f = liftIO $ runSecureClient wsBaseUrl 443 (intercalate "/" (wsBasePath : path)) parseMessages
     where
-    parseMessages :: FromJSON a => Connection -> IO (ThreadId, TMChan a)
-    parseMessages conn = liftIO $ do
-        chan <- atomically newTMChan
-
-        let loop = do
-              dataMessage <- receiveDataMessage conn
+    parseMessages :: MonadIO m => Connection -> m ThreadId
+    parseMessages conn = do
+        let
+            loop = do
+              dataMessage <- liftIO $ receiveDataMessage conn
               let message = case dataMessage of
                                 Binary m -> m -- just in case?
                                 Text   m -> m
@@ -150,11 +147,10 @@ tapeWith path sel = liftIO $ runSecureClient wsBaseUrl 443 (intercalate "/" (wsB
 
               case fromJSON <$> decoded of
                   -- TODO: signal TMChan close reason?
-                  Just (Success val) -> atomically (writeTMChan chan val) >> loop
+                  Just (Success val) -> f val >> loop
                   _                  -> return ()
 
-        tid <- forkIO (loop `finally` atomically (closeTMChan chan))
-        return (tid, chan)
+        liftIO (forkIO loop)
 
 
 ---- General

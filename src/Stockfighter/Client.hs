@@ -5,10 +5,10 @@ module Stockfighter.Client
   ( StockfighterT
   , runStockfighter
   , APIException(..)
-  , SfLevel(..)
   , SfInst(..)
 
   -- GM calls
+  , withLevel
   , startLevel
   , stopLevel
   , resumeLevel
@@ -40,8 +40,8 @@ module Stockfighter.Client
   ) where
 
 import Control.Concurrent
-import Control.Concurrent.STM.TMChan
 import Control.Lens hiding ((.=))
+import Control.Monad.Catch
 import Control.Monad.Reader
 import Data.Aeson
 import Data.Aeson.Lens
@@ -56,6 +56,12 @@ type StockfighterT = ReaderT ApiKey
 
 runStockfighter :: ApiKey -> StockfighterT m a -> m a
 runStockfighter = flip runReaderT
+
+
+withLevel :: (MonadAPI m, MonadMask m) => String -> (SfLevel -> m a) -> m a
+withLevel name f = do
+    level <- startLevel name
+    f level `finally` stopLevel (instanceId level)
 
 
 emptyPost :: [FormParam]
@@ -155,20 +161,20 @@ cancelOrder (Venue venue) (Symbol symbol) orderId =
 
 ---- Websockets
 
-tickerTape :: MonadIO m => Account -> Venue -> m (ThreadId, TMChan Quote)
+tickerTape :: MonadIO m => Account -> Venue -> (Quote -> IO ()) -> m ThreadId
 tickerTape (Account account) (Venue venue) =
     tapeWith [account, "venues", venue, "tickertape"]
              (^? key "quote")
 
-tickerTapeStock :: MonadIO m => Account -> Venue -> Symbol -> m (ThreadId, TMChan Quote)
+tickerTapeStock :: MonadIO m => Account -> Venue -> Symbol -> (Quote -> IO ()) -> m ThreadId
 tickerTapeStock (Account account) (Venue venue) (Symbol symbol) =
     tapeWith [account, "venues", venue, "tickertape", "stocks", symbol]
              (^? key "quote")
 
-executions :: MonadIO m => Account -> Venue -> m (ThreadId, TMChan Execution)
+executions :: MonadIO m => Account -> Venue -> (Execution -> IO ()) -> m ThreadId
 executions (Account account) (Venue venue) =
     tape [account, "venues", venue, "executions"]
 
-executionsStock :: MonadIO m => Account -> Venue -> Symbol -> m (ThreadId, TMChan Execution)
+executionsStock :: MonadIO m => Account -> Venue -> Symbol -> (Execution -> IO ()) -> m ThreadId
 executionsStock (Account account) (Venue venue) (Symbol symbol) =
     tape [account, "venues", venue, "executions", "stocks", symbol]

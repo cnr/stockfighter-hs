@@ -117,9 +117,9 @@ data Quote = Quote { qSymbol    :: Symbol
                    , qAskSize   :: Int
                    , qBidDepth  :: Int
                    , qAskDepth  :: Int
-                   , qLastPrice :: Int
-                   , qLastSize  :: Int
-                   , qLastTrade :: UTCTime
+                   , qLastPrice :: Maybe Int
+                   , qLastSize  :: Maybe Int
+                   , qLastTrade :: Maybe UTCTime
                    , qQuoteTime :: UTCTime
                    } deriving Show
 
@@ -238,9 +238,9 @@ instance FromJSON Quote where
               <*> obj .:  "askSize"
               <*> obj .:  "bidDepth"
               <*> obj .:  "askDepth"
-              <*> obj .:  "last"
-              <*> obj .:  "lastSize"
-              <*> obj .:  "lastTrade"
+              <*> obj .:? "last"
+              <*> obj .:? "lastSize"
+              <*> obj .:? "lastTrade"
               <*> obj .:  "quoteTime"
 
 instance FromJSON Execution where

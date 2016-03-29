@@ -1,4 +1,9 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Main where
 
+import Stockfighter
+import Stockfighter.UI
+
 main :: IO ()
-main = return ()
+main = runStockfighter "API_KEY" (withLevel "first_steps" startBlotter)

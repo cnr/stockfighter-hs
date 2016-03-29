@@ -26,11 +26,8 @@ library
                      , lens
                      , lens-aeson
                      , mtl
-                     , stm
-                     , stm-chans
                      , text
                      , time
-                     , transformers
                      , websockets
                      , wreq
                      , wuss ==1.0.2
@@ -46,10 +43,12 @@ executable stockfighter-hs-exe
   build-depends:       base
                      , stockfighter-hs
                      , brick
+                     , containers
                      , data-default
                      , exceptions
                      , lens
                      , mtl
+                     , unordered-containers
                      , vty
                      , reactive-banana ==1.1.0.0
   default-language:    Haskell2010
