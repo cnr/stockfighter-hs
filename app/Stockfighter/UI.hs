@@ -42,9 +42,9 @@ startBlotter SfLevel{..} = do
         -- bOrders :: Behavior (IntMap UserOrder)
         bOrders <- accumB IM.empty
                  $ unions
-                 [ insertOrder <$> ePlaced
-                 , insertOrder <$> eCanceled
-                 , updateOrder <$> eExecutions
+                 [ insertOrder          <$> ePlaced
+                 , insertOrder          <$> eCanceled
+                 , insertOrder . eOrder <$> eExecutions
                  ]
 
         -- -- Owned stock
@@ -86,9 +86,6 @@ startBlotter SfLevel{..} = do
 
 insertOrder :: UserOrder -> IntMap UserOrder -> IntMap UserOrder
 insertOrder order = IM.insert (uoOrderId order) order
-
-updateOrder :: Execution -> IntMap UserOrder -> IntMap UserOrder
-updateOrder = undefined
 
 determineOwned :: [UserOrder] -> HashMap Symbol Int
 determineOwned = undefined

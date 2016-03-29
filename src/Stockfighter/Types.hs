@@ -126,7 +126,7 @@ data Quote = Quote { qSymbol    :: Symbol
 data Execution = Execution { eAccount          :: Account
                            , eVenue            :: Venue
                            , eSymbol           :: Symbol
-                           , eOrder            :: Order
+                           , eOrder            :: UserOrder
                            , eStandingId       :: Int
                            , eIncomingId       :: Int
                            , ePrice            :: Int
