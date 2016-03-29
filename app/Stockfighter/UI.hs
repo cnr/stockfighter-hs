@@ -6,10 +6,12 @@ module Stockfighter.UI
   ) where
 
 import           Brick
-import           Data.Default (def)
+import           Data.Default        (def)
 import           Data.HashMap.Strict (HashMap)
-import           Data.IntMap (IntMap)
-import qualified Data.IntMap as IM
+import           Data.IntMap         (IntMap)
+import qualified Data.IntMap         as IM
+import qualified Data.Map            as M
+import           Data.Maybe          (fromMaybe)
 import           Reactive.Banana
 import           Reactive.Banana.Frameworks
 import           Stockfighter
@@ -53,8 +55,8 @@ startBlotter SfLevel{..} = do
 
         -- -- Player balance
         -- bBalance :: Behavior Int
-        -- TODO: account starting balance
-        let bBalance = determineBalance . IM.elems <$> bOrders
+        let startingBalance = fromMaybe 0 (M.lookup "USD" =<< balances)
+            bBalance        = (startingBalance +) . determineBalance . IM.elems <$> bOrders
 
 
         ---- Widgets
