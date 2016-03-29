@@ -41,9 +41,9 @@ data ReactiveApp a = ReactiveApp { bView :: Behavior RenderView
                                  , eExit :: Event a
                                  }
 
-data RenderView = RenderView { rWidgets :: [Widget]
-                             , rCursor  :: Maybe CursorLocation
-                             , rAttrMap :: AttrMap
+data RenderView = RenderView { rWidgets       :: [Widget]
+                             , rChooseCursor  :: [CursorLocation] -> Maybe CursorLocation
+                             , rAttrMap       :: AttrMap
                              }
 
 reactiveMain :: MonadIO m => ReactiveBuilder a -> m a
@@ -96,7 +96,8 @@ renderView vty RenderView{..} = do
 
         pic    = V.picForLayers (V.resize width height . image <$> layers)
 
-        cursor = maybe V.NoCursor (uncurry V.Cursor . loc . cursorLocation) rCursor
+        chosen = rChooseCursor (cursors =<< layers)
+        cursor = maybe V.NoCursor (uncurry V.Cursor . loc . cursorLocation) chosen
 
     V.update vty pic { V.picCursor = cursor}
 

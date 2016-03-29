@@ -78,7 +78,7 @@ startBlotter SfLevel{..} = do
 
         -- Finally, the moment we've all been waiting for:
         return ReactiveApp { bView = RenderView <$> fmap pure bAppWidget
-                                                <*> pure Nothing
+                                                <*> pure (const Nothing)
                                                 <*> pure def
                            , eExit = never
                            }
