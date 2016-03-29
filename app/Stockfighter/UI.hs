@@ -114,7 +114,7 @@ determineBalance = foldr go 0
 makeStanding :: Int -- Balance
              -> [(Symbol, Int)] -- Owned stock
              -> Widget
-makeStanding balance owned = border $ reifyCol $
+makeStanding balance owned = border $ reifyCol Fixed $
     colP [ rowP [ fullJustify ["Standing"]]
          , rowP [ leftJustify  ("Balance"    : map (unSymbol . fst) owned)
                 , fullJustify  [" "]

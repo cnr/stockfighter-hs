@@ -69,10 +69,10 @@ col :: [a] -> Layout 'Vert a
 col = Padded . map Leaf
 
 
-reifyCol :: Layout 'Vert Widget -> Widget
+reifyCol :: Size -> Layout 'Vert Widget -> Widget
 reifyCol = reifyAxis Vert
 
-reifyRow :: Layout 'Horiz Widget -> Widget
+reifyRow :: Size -> Layout 'Horiz Widget -> Widget
 reifyRow = reifyAxis Horiz
 
 
@@ -94,8 +94,8 @@ data MinSize = MinSize { minWidth  :: Maybe Int
                        , minHeight :: Maybe Int
                        } deriving Show
 
-prerender' :: Axis -> Layout a Widget -> RenderM (Prerendered Widget)
-prerender' axis (Leaf widget) = do
+prerender :: Axis -> Layout a Widget -> RenderM (Prerendered Widget)
+prerender axis (Leaf widget) = do
     rendered <- render widget
 
     let img   = image rendered
@@ -111,8 +111,8 @@ prerender' axis (Leaf widget) = do
                     else Left widget
     return $ RLeaf axis (MinSize width height) result
 
-prerender' axis (Padded xs) = do
-    prerendered <- traverse (prerender' (perpendicular axis)) xs
+prerender axis (Padded xs) = do
+    prerendered <- traverse (prerender (perpendicular axis)) xs
     let PadOpts{..} = axisOpts axis
         sizes       = prerendered ^.. folded . to preMinSize
         width       = widthA  (sizes ^.. folded . to minWidth  . _Just)
@@ -127,23 +127,28 @@ preMinSize (RPadded _ size _) = size
 ---- Rendering
 
 -- RIP type safety
--- Initiate the prerender pass and determine the size of our primary
--- axis. If all of our children are greedy on this axis, so are we.
--- (otherwise, constrain the render to the smallest child on this axis)
-reifyAxis :: Axis -> Layout a Widget -> Widget
-reifyAxis axis layout = Widget Fixed Fixed $ do
-     prerendered <- prerender' axis layout
+--
+-- Do a prerender pass, and optionally limit the size of our primary
+-- axis when we reify.
+--
+-- To limit the primary axis, determine the size of our children on
+-- the primary axis. Constrain the render to the smallest child (if any)
+reifyAxis :: Axis -> Size -> Layout a Widget -> Widget
+reifyAxis Horiz Greedy layout = Widget Greedy Fixed  (reify =<< prerender Horiz layout)
+reifyAxis Vert  Greedy layout = Widget Fixed  Greedy (reify =<< prerender Vert  layout)
+reifyAxis axis Fixed layout = Widget Fixed Fixed $ do
+     prerendered <- prerender axis layout
 
      let PadOpts{..}  = axisOpts axis
          maybePrimary = minSizeP (preMinSize prerendered)
 
-     let limit = case maybePrimary of
-           -- Fixed
-           Just primary -> withReaderT (ctxPL .~ primary)
-           -- Greedy
-           Nothing      -> id
-
-     limit (reify prerendered)
+     case maybePrimary of
+           -- Hooray, we're Fixed
+           Just primary -> withReaderT (ctxPL .~ primary) (reify prerendered)
+           -- We lied about being Fixed, and we'll continue to lie about
+           -- our Fixed status to those who ask. Meanwhile, let's render
+           -- as large as we can!
+           Nothing      -> reify prerendered
 
 
 -- Take the information we gathered while prerendering to render a final
