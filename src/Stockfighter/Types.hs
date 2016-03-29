@@ -26,6 +26,7 @@ module Stockfighter.Types
 import           Control.Applicative (empty)
 import           Data.Aeson          ((.:), (.:?), FromJSON(parseJSON), Object, withObject, withScientific, withText)
 import           Data.Bool           (bool)
+import           Data.Hashable       (Hashable)
 import           Data.Map            (Map)
 import           Data.String         (IsString)
 import qualified Data.Text           as T
@@ -36,19 +37,19 @@ import           Data.Time.Clock     (UTCTime)
 -- Too many types? Never!
 
 newtype Account    = Account    { unAccount    :: String
-                                } deriving (Eq, Ord, Show, IsString)
+                                } deriving (Eq, Ord, Show, Hashable, IsString)
 
 newtype ApiKey     = ApiKey     { unApiKey     :: String
-                                } deriving (Eq, Ord, Show, IsString)
+                                } deriving (Eq, Ord, Show, Hashable, IsString)
 
 newtype InstanceId = InstanceId { unInstanceId :: Int
-                                } deriving (Eq, Ord, Show)
+                                } deriving (Eq, Ord, Hashable, Show)
 
 newtype Symbol     = Symbol     { unSymbol     :: String
-                                } deriving (Eq, Ord, Show, IsString)
+                                } deriving (Eq, Ord, Show, Hashable, IsString)
 
 newtype Venue      = Venue      { unVenue      :: String
-                                } deriving (Eq, Ord, Show, IsString)
+                                } deriving (Eq, Ord, Show, Hashable, IsString)
 
 
 data SfLevel = SfLevel { instanceId           :: InstanceId

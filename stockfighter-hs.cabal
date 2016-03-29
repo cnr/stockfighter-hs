@@ -23,6 +23,7 @@ library
                      , bytestring
                      , containers
                      , exceptions
+                     , hashable
                      , lens
                      , lens-aeson
                      , mtl
