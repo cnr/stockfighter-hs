@@ -117,7 +117,7 @@ makeStanding :: Int -- Balance
 makeStanding balance owned = border $ reifyCol Fixed $
     colP [ rowP [ fullJustify ["Standing"]]
          , rowP [ leftJustify  ("Balance"    : map (unSymbol . fst) owned)
-                , fullJustify  [" "]
+                , vsep " "
                 , rightJustify (show balance : map (show     . snd) owned)
                 ]
          ]

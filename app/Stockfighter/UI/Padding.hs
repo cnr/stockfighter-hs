@@ -12,6 +12,8 @@ module Stockfighter.UI.Padding
   , col
   , reifyRow
   , reifyCol
+  , hsep
+  , vsep
 
   , leftJustify
   , leftJustifyAttr
@@ -74,6 +76,17 @@ reifyCol = reifyAxis Vert
 
 reifyRow :: Size -> Layout 'Horiz Widget -> Widget
 reifyRow = reifyAxis Horiz
+
+
+hsep :: String -> Layout 'Horiz Widget
+hsep xs = Leaf $ Widget Greedy Fixed $ do
+    width <- asks availWidth
+    render (str (take width (cycle xs)))
+
+vsep :: String -> Layout 'Vert Widget
+vsep xs = Leaf $ Widget Fixed Greedy $ do
+    height <- asks availHeight
+    render (vBox (replicate height (str xs)))
 
 
 ---- Prerendering
